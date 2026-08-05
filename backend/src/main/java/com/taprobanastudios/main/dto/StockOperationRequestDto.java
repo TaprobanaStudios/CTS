@@ -6,8 +6,8 @@ import java.util.UUID;
 
 @Data
 public class StockOperationRequestDto {
-    private UUID materialId;
-    private String materialName;
+    private UUID itemId;
+    private String itemName;
     private BigDecimal amount;
     private String authorizedBy;
     private String remarks;

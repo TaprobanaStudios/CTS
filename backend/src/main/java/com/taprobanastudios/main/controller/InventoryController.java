@@ -27,4 +27,24 @@ public class InventoryController extends AbstractController {
         inventoryService.deductStock(requestDto);
         return sendNoContentResponse();
     }
+
+    @GetMapping("/current")
+    public ResponseEntity<java.util.List<com.taprobanastudios.main.dto.CurrentInventoryDto>> getCurrentInventory() {
+        return sendSuccessResponse(inventoryService.getCurrentInventory());
+    }
+
+    @PostMapping("/items")
+    public ResponseEntity<com.taprobanastudios.main.dto.ItemDto> createItem(@RequestBody com.taprobanastudios.main.dto.ItemDto itemDto) {
+        return sendCreatedResponse(inventoryService.createItem(itemDto));
+    }
+
+    @GetMapping("/bin/{itemId}")
+    public ResponseEntity<java.util.List<com.taprobanastudios.main.dto.InventoryLogDto>> getBinLogs(@PathVariable java.util.UUID itemId) {
+        return sendSuccessResponse(inventoryService.getBinLogs(itemId));
+    }
+
+    @GetMapping("/bin/all")
+    public ResponseEntity<java.util.List<com.taprobanastudios.main.dto.InventoryLogDto>> getAllBinLogs() {
+        return sendSuccessResponse(inventoryService.getAllBinLogs());
+    }
 }

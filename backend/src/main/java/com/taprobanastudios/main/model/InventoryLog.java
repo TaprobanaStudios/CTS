@@ -22,8 +22,8 @@ public class InventoryLog extends Auditable<String> {
     private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "material_id", nullable = false)
-    private Material material;
+    @JoinColumn(name = "item_id", nullable = false)
+    private Item item;
 
     @Column(name = "transaction_date", nullable = false)
     private LocalDate transactionDate;

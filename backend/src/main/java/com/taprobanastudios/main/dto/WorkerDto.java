@@ -8,4 +8,8 @@ public class WorkerDto {
     private UUID id;
     private String name;
     private String status;
+    private String contactNumber;
+    private String nicNumber;
+    private String address;
+    private java.time.LocalDate startDate;
 }

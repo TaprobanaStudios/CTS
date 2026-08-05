@@ -8,7 +8,7 @@ import java.util.UUID;
 @Data
 public class InventoryLogDto {
     private UUID id;
-    private MaterialDto material;
+    private ItemDto item;
     private LocalDate transactionDate;
     private BigDecimal openingStock;
     private BigDecimal qtyIn;

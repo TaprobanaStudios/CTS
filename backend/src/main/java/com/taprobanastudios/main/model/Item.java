@@ -10,11 +10,11 @@ import lombok.EqualsAndHashCode;
 
 
 @Entity
-@Table(name = "materials")
+@Table(name = "items")
 @Getter
 @Setter
 @EqualsAndHashCode(callSuper = true)
-public class Material extends Auditable<String> {
+public class Item extends Auditable<String> {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -23,10 +23,14 @@ public class Material extends Auditable<String> {
     @Column(name = "name", nullable = false, unique = true)
     private String name;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "unit_of_measure", nullable = false)
-    private String unitOfMeasure;
+    private com.taprobanastudios.main.model.enums.UnitOfMeasure unitOfMeasure;
 
-    // One Material has Many Inventory Logs
-    @OneToMany(mappedBy = "material", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Column(name = "is_default_material", nullable = false)
+    private boolean isDefaultMaterial = false;
+
+    // One Item has Many Inventory Logs
+    @OneToMany(mappedBy = "item", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<InventoryLog> logs;
 }

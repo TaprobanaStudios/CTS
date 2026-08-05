@@ -29,4 +29,13 @@ public class Worker extends Auditable<String> {
     @Column(name = "status", nullable = false)
     private String status;
 
+    @Column(name = "contact_number", nullable = false)
+    private String contactNumber;
+
+    @Column(name = "nic_number", nullable = false)
+    private String nicNumber;
+
+    @Column(name = "address", nullable = false)
+    private String address;
+
 }

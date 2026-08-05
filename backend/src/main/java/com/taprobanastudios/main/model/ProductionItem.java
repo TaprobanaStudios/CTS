@@ -29,20 +29,8 @@ public class ProductionItem extends Auditable<String> {
     @Column(name = "qty_produced")
     private Integer qtyProduced;
 
-    @Column(name = "cement_used", precision = 10, scale = 2)
-    private BigDecimal cementUsed;
-
-    @Column(name = "qd_used", precision = 10, scale = 2)
-    private BigDecimal qdUsed;
-
-    @Column(name = "rs_used", precision = 10, scale = 2)
-    private BigDecimal rsUsed;
-
-    @Column(name = "half_m_used", precision = 10, scale = 2)
-    private BigDecimal halfMUsed;
-
-    @Column(name = "three_quarter_m_used", precision = 10, scale = 2)
-    private BigDecimal threeQuarterMUsed;
+    @OneToMany(mappedBy = "productionItem", cascade = CascadeType.ALL, orphanRemoval = true)
+    private java.util.List<ProductionMaterialUsage> materialUsages = new java.util.ArrayList<>();
 
     @Column(name = "damages")
     private Integer damages;

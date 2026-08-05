@@ -27,8 +27,12 @@ public class WorkerServiceImpl implements WorkerService {
         log.info("Creating new worker: {}", workerDto.getName());
         Worker worker = new Worker();
         worker.setName(workerDto.getName());
-        worker.setStatus(workerDto.getStatus());
-        
+        worker.setStatus(
+                workerDto.getStatus() != null && !workerDto.getStatus().isEmpty() ? workerDto.getStatus() : "ACTIVE");
+        worker.setContactNumber(workerDto.getContactNumber());
+        worker.setNicNumber(workerDto.getNicNumber());
+        worker.setAddress(workerDto.getAddress());
+
         Worker savedWorker = workerRepository.save(worker);
         return mapToDto(savedWorker);
     }
@@ -41,8 +45,13 @@ public class WorkerServiceImpl implements WorkerService {
                 .orElseThrow(() -> new ResourceNotFoundException("Worker not found with id: " + id));
 
         worker.setName(workerDtoDetails.getName());
-        worker.setStatus(workerDtoDetails.getStatus());
-        
+        worker.setStatus(workerDtoDetails.getStatus() != null && !workerDtoDetails.getStatus().isEmpty()
+                ? workerDtoDetails.getStatus()
+                : worker.getStatus());
+        worker.setContactNumber(workerDtoDetails.getContactNumber());
+        worker.setNicNumber(workerDtoDetails.getNicNumber());
+        worker.setAddress(workerDtoDetails.getAddress());
+
         Worker updatedWorker = workerRepository.save(worker);
         return mapToDto(updatedWorker);
     }
@@ -71,14 +80,19 @@ public class WorkerServiceImpl implements WorkerService {
         log.info("Deleting worker with id: {}", id);
         Worker worker = workerRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Worker not found with id: " + id));
-        workerRepository.delete(worker);
+        worker.setStatus("DEACTIVATED");
+        workerRepository.save(worker);
     }
-    
+
     private WorkerDto mapToDto(Worker worker) {
         WorkerDto dto = new WorkerDto();
         dto.setId(worker.getId());
         dto.setName(worker.getName());
         dto.setStatus(worker.getStatus());
+        dto.setContactNumber(worker.getContactNumber());
+        dto.setNicNumber(worker.getNicNumber());
+        dto.setAddress(worker.getAddress());
+        dto.setStartDate(worker.getCreatedAt().toLocalDate());
         return dto;
     }
 }
