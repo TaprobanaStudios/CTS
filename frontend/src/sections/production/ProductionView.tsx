@@ -116,8 +116,9 @@ export default function ProductionView() {
         if (wRes.ok) setWorkers(await wRes.json());
         if (iRes.ok) {
           const invData = await iRes.json();
-          setInventoryItems(invData);
-          initDefaultMaterials(invData);
+          const itemsList = Array.isArray(invData) ? invData : invData.content || [];
+          setInventoryItems(itemsList);
+          initDefaultMaterials(itemsList);
         }
       } catch (err) {
         console.error(err);

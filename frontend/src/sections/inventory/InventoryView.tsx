@@ -44,7 +44,7 @@ export default function InventoryView() {
       const res = await fetch("/api/inventory/current");
       if (!res.ok) throw new Error("Failed to fetch inventory data");
       const data = await res.json();
-      setInventory(data);
+      setInventory(Array.isArray(data) ? data : data.content || []);
     } catch (err: any) {
       setError(err.message || "An error occurred");
     } finally {

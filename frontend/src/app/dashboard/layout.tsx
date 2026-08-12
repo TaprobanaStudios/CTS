@@ -24,6 +24,10 @@ import LogoutIcon from "@mui/icons-material/Logout";
 import MenuIcon from "@mui/icons-material/Menu";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 
+import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
+import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
+import Collapse from "@mui/material/Collapse";
+
 const drawerWidth = 260;
 
 interface Props {
@@ -34,6 +38,11 @@ export default function DashboardLayout({ children }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = React.useState(false);
+  const [openSubmenus, setOpenSubmenus] = React.useState<
+    Record<string, boolean>
+  >({
+    "Bin Cards": true,
+  });
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
@@ -42,6 +51,13 @@ export default function DashboardLayout({ children }: Props) {
   const handleLogout = () => {
     document.cookie = "auth=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
     router.push("/login");
+  };
+
+  const toggleSubmenu = (text: string) => {
+    setOpenSubmenus((prev) => ({
+      ...prev,
+      [text]: !prev[text],
+    }));
   };
 
   const navItems = [
@@ -55,7 +71,14 @@ export default function DashboardLayout({ children }: Props) {
     {
       text: "Bin Cards",
       icon: <ReceiptLongIcon />,
-      path: "/dashboard/inventory/bin",
+      path: "/dashboard/bin-cards",
+      children: [
+        { text: "Material Bin Card", path: "/dashboard/bin-cards/material" },
+        {
+          text: "Production Bin Card",
+          path: "/dashboard/bin-cards/production",
+        },
+      ],
     },
     {
       text: "Production",
@@ -79,62 +102,153 @@ export default function DashboardLayout({ children }: Props) {
           variant="h5"
           sx={{ fontWeight: "bold", letterSpacing: 1, color: "white" }}
         >
-          CTS
+          DNS
         </Typography>
       </Box>
 
       <List sx={{ flexGrow: 1, px: 2 }}>
         {navItems.map((item) => {
-          const isActive = pathname === item.path;
+          const hasChildren = Boolean(
+            item.children && item.children.length > 0,
+          );
+          const isChildActive =
+            hasChildren && item.children?.some((c) => pathname === c.path);
+          const isActive = pathname === item.path || isChildActive;
+          const isExpanded = Boolean(openSubmenus[item.text]);
+
           return (
-            <ListItem key={item.text} disablePadding sx={{ mb: 0.5 }}>
-              <ListItemButton
-                selected={isActive}
-                onClick={() => {
-                  router.push(item.path);
-                  setMobileOpen(false);
-                }}
-                sx={{
-                  borderRadius: 0,
-                  py: 1,
-                  "&.Mui-selected": {
-                    bgcolor: "rgba(255, 255, 255, 0.08)",
-                    "&:hover": { bgcolor: "rgba(255, 255, 255, 0.12)" },
-                  },
-                  "&:hover": { bgcolor: "rgba(255, 255, 255, 0.04)" },
-                }}
-              >
-                <ListItemIcon
+            <React.Fragment key={item.text}>
+              <ListItem disablePadding sx={{ mb: 0.5 }}>
+                <ListItemButton
+                  selected={isActive && !hasChildren}
+                  onClick={() => {
+                    if (hasChildren) {
+                      toggleSubmenu(item.text);
+                    } else {
+                      router.push(item.path);
+                      setMobileOpen(false);
+                    }
+                  }}
                   sx={{
-                    color: isActive ? "primary.main" : "rgba(255,255,255,0.7)",
-                    minWidth: 40,
+                    borderRadius: "8px",
+                    py: 1,
+                    px: 1.5,
+                    "&.Mui-selected": {
+                      bgcolor: "rgba(255, 255, 255, 0.08)",
+                      "&:hover": { bgcolor: "rgba(255, 255, 255, 0.12)" },
+                    },
+                    "&:hover": { bgcolor: "rgba(255, 255, 255, 0.04)" },
                   }}
                 >
-                  {item.icon}
-                </ListItemIcon>
-                <ListItemText
-                  primary={item.text}
-                  slotProps={{
-                    primary: {
-                      sx: {
-                        fontWeight: isActive ? 600 : 400,
-                        color: isActive ? "#fff" : "rgba(255,255,255,0.7)",
-                      },
-                    },
-                  }}
-                />
-                {isActive && (
-                  <Box
+                  <ListItemIcon
                     sx={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: "50%",
-                      bgcolor: "primary.main",
+                      color: isActive
+                        ? "primary.main"
+                        : "rgba(255,255,255,0.7)",
+                      minWidth: 38,
+                    }}
+                  >
+                    {item.icon}
+                  </ListItemIcon>
+                  <ListItemText
+                    primary={item.text}
+                    slotProps={{
+                      primary: {
+                        sx: {
+                          fontWeight: isActive ? 600 : 400,
+                          color: isActive ? "#fff" : "rgba(255,255,255,0.7)",
+                          fontSize: "0.9rem",
+                        },
+                      },
                     }}
                   />
-                )}
-              </ListItemButton>
-            </ListItem>
+                  {hasChildren ? (
+                    isExpanded ? (
+                      <KeyboardArrowDownIcon
+                        sx={{ color: "rgba(255,255,255,0.5)", fontSize: 18 }}
+                      />
+                    ) : (
+                      <KeyboardArrowRightIcon
+                        sx={{ color: "rgba(255,255,255,0.5)", fontSize: 18 }}
+                      />
+                    )
+                  ) : (
+                    isActive && (
+                      <Box
+                        sx={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: "50%",
+                          bgcolor: "primary.main",
+                        }}
+                      />
+                    )
+                  )}
+                </ListItemButton>
+              </ListItem>
+
+              {/* Submenu List */}
+              {hasChildren && (
+                <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+                  <Box sx={{ pl: 2, my: 0.5 }}>
+                    {item.children?.map((child) => {
+                      const isSubActive = pathname === child.path;
+
+                      return (
+                        <ListItemButton
+                          key={child.text}
+                          selected={isSubActive}
+                          onClick={() => {
+                            router.push(child.path);
+                            setMobileOpen(false);
+                          }}
+                          sx={{
+                            pl: 3.5,
+                            py: 0.85,
+                            borderRadius: "8px",
+                            mb: 0.25,
+                            "&.Mui-selected": {
+                              bgcolor: "rgba(255, 255, 255, 0.08)",
+                              "&:hover": {
+                                bgcolor: "rgba(255, 255, 255, 0.12)",
+                              },
+                            },
+                            "&:hover": {
+                              bgcolor: "rgba(255, 255, 255, 0.04)",
+                            },
+                          }}
+                        >
+                          <ListItemText
+                            primary={child.text}
+                            slotProps={{
+                              primary: {
+                                sx: {
+                                  fontSize: "0.85rem",
+                                  fontWeight: isSubActive ? 600 : 400,
+                                  color: isSubActive
+                                    ? "#38bdf8"
+                                    : "rgba(255,255,255,0.7)",
+                                },
+                              },
+                            }}
+                          />
+                          {isSubActive && (
+                            <Box
+                              sx={{
+                                width: 6,
+                                height: 6,
+                                borderRadius: "50%",
+                                bgcolor: "#38bdf8",
+                              }}
+                            />
+                          )}
+                        </ListItemButton>
+                      );
+                    })}
+                  </Box>
+                </Collapse>
+              )}
+            </React.Fragment>
           );
         })}
       </List>

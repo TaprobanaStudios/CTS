@@ -3,11 +3,11 @@ package com.taprobanastudios.main.controller;
 import com.taprobanastudios.main.dto.StockOperationRequestDto;
 import com.taprobanastudios.main.service.InventoryService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/inventory")
@@ -29,8 +29,14 @@ public class InventoryController extends AbstractController {
     }
 
     @GetMapping("/current")
-    public ResponseEntity<java.util.List<com.taprobanastudios.main.dto.CurrentInventoryDto>> getCurrentInventory() {
-        return sendSuccessResponse(inventoryService.getCurrentInventory());
+    public ResponseEntity<?> getCurrentInventory(
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size,
+            Pageable pageable) {
+        if (page == null && size == null && (pageable == null || pageable.isUnpaged())) {
+            return sendSuccessResponse(inventoryService.getCurrentInventory());
+        }
+        return sendSuccessResponse(inventoryService.getCurrentInventory(pageable));
     }
 
     @PostMapping("/items")
@@ -39,12 +45,26 @@ public class InventoryController extends AbstractController {
     }
 
     @GetMapping("/bin/{itemId}")
-    public ResponseEntity<java.util.List<com.taprobanastudios.main.dto.InventoryLogDto>> getBinLogs(@PathVariable java.util.UUID itemId) {
-        return sendSuccessResponse(inventoryService.getBinLogs(itemId));
+    public ResponseEntity<?> getBinLogs(
+            @PathVariable UUID itemId,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size,
+            Pageable pageable) {
+        if (page == null && size == null && (pageable == null || pageable.isUnpaged())) {
+            return sendSuccessResponse(inventoryService.getBinLogs(itemId));
+        }
+        return sendSuccessResponse(inventoryService.getBinLogs(itemId, pageable));
     }
 
     @GetMapping("/bin/all")
-    public ResponseEntity<java.util.List<com.taprobanastudios.main.dto.InventoryLogDto>> getAllBinLogs() {
-        return sendSuccessResponse(inventoryService.getAllBinLogs());
+    public ResponseEntity<?> getAllBinLogs(
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size,
+            Pageable pageable) {
+        if (page == null && size == null && (pageable == null || pageable.isUnpaged())) {
+            return sendSuccessResponse(inventoryService.getAllBinLogs());
+        }
+        return sendSuccessResponse(inventoryService.getAllBinLogs(pageable));
     }
 }
+

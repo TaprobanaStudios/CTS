@@ -22,6 +22,9 @@ import com.taprobanastudios.main.exception.BadRequestException;
 import com.taprobanastudios.main.dto.ItemDto;
 import com.taprobanastudios.main.dto.CurrentInventoryDto;
 import com.taprobanastudios.main.dto.InventoryLogDto;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 @Service
 @Slf4j
@@ -132,71 +135,97 @@ public class InventoryServiceImpl implements InventoryService {
     @Transactional(readOnly = true)
     public List<CurrentInventoryDto> getCurrentInventory() {
         log.info("Fetching current inventory status");
-        return itemRepository.findAllWithLogs().stream().map(item -> {
-            BigDecimal currentStock = BigDecimal.ZERO;
-            if (item.getLogs() != null) {
-                for (InventoryLog logEntry : item.getLogs()) {
-                    BigDecimal in = logEntry.getQtyIn() != null ? logEntry.getQtyIn() : BigDecimal.ZERO;
-                    BigDecimal out = logEntry.getQtyOut() != null ? logEntry.getQtyOut() : BigDecimal.ZERO;
-                    currentStock = currentStock.add(in).subtract(out);
-                }
+        return itemRepository.findAllWithLogs().stream().map(this::mapToCurrentInventoryDto).collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<CurrentInventoryDto> getCurrentInventory(Pageable pageable) {
+        log.info("Fetching current inventory status with pageable: {}", pageable);
+        List<CurrentInventoryDto> all = getCurrentInventory();
+        if (pageable == null || pageable.isUnpaged()) {
+            return new PageImpl<>(all, Pageable.unpaged(), all.size());
+        }
+        int start = (int) pageable.getOffset();
+        if (start >= all.size()) {
+            return new PageImpl<>(List.of(), pageable, all.size());
+        }
+        int end = Math.min((start + pageable.getPageSize()), all.size());
+        return new PageImpl<>(all.subList(start, end), pageable, all.size());
+    }
+
+    private CurrentInventoryDto mapToCurrentInventoryDto(Item item) {
+        BigDecimal currentStock = BigDecimal.ZERO;
+        if (item.getLogs() != null) {
+            for (InventoryLog logEntry : item.getLogs()) {
+                BigDecimal in = logEntry.getQtyIn() != null ? logEntry.getQtyIn() : BigDecimal.ZERO;
+                BigDecimal out = logEntry.getQtyOut() != null ? logEntry.getQtyOut() : BigDecimal.ZERO;
+                currentStock = currentStock.add(in).subtract(out);
             }
-            java.time.LocalDateTime updateDate = item.getModifiedAt() != null ? item.getModifiedAt() : item.getCreatedAt();
-            return new CurrentInventoryDto(
-                    item.getId(), 
-                    item.getName(), 
-                    item.getUnitOfMeasure(), 
-                    currentStock,
-                    updateDate,
-                    item.isDefaultMaterial());
-        }).collect(Collectors.toList());
+        }
+        java.time.LocalDateTime updateDate = item.getModifiedAt() != null ? item.getModifiedAt() : item.getCreatedAt();
+        return new CurrentInventoryDto(
+                item.getId(), 
+                item.getName(), 
+                item.getUnitOfMeasure(), 
+                currentStock,
+                updateDate,
+                item.isDefaultMaterial());
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<InventoryLogDto> getBinLogs(UUID itemId) {
-        return inventoryLogRepository.findByItem_IdOrderByCreatedAtDesc(itemId).stream().map(log -> {
-            InventoryLogDto dto = new InventoryLogDto();
-            dto.setId(log.getId());
-            dto.setTransactionDate(log.getTransactionDate());
-            dto.setOpeningStock(log.getOpeningStock());
-            dto.setQtyIn(log.getQtyIn());
-            dto.setQtyOut(log.getQtyOut());
-            dto.setClosingStock(log.getClosingStock());
-            dto.setAuthorizedBy(log.getAuthorizedBy());
-            dto.setRemarks(log.getRemarks());
-            
-            ItemDto itemDto = new ItemDto();
-            itemDto.setId(log.getItem().getId());
-            itemDto.setName(log.getItem().getName());
-            itemDto.setUnitOfMeasure(log.getItem().getUnitOfMeasure());
-            dto.setItem(itemDto);
-            
-            return dto;
-        }).collect(Collectors.toList());
+        return inventoryLogRepository.findByItem_IdOrderByCreatedAtDesc(itemId).stream().map(this::mapToLogDto).collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<InventoryLogDto> getBinLogs(UUID itemId, Pageable pageable) {
+        log.info("Fetching bin logs for item {} with pageable: {}", itemId, pageable);
+        if (pageable == null || pageable.isUnpaged()) {
+            List<InventoryLogDto> list = getBinLogs(itemId);
+            return new PageImpl<>(list, Pageable.unpaged(), list.size());
+        }
+        return inventoryLogRepository.findByItem_IdOrderByCreatedAtDesc(itemId, pageable).map(this::mapToLogDto);
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<InventoryLogDto> getAllBinLogs() {
-        return inventoryLogRepository.findAllByOrderByCreatedAtDesc().stream().map(log -> {
-            InventoryLogDto dto = new InventoryLogDto();
-            dto.setId(log.getId());
-            dto.setTransactionDate(log.getTransactionDate());
-            dto.setOpeningStock(log.getOpeningStock());
-            dto.setQtyIn(log.getQtyIn());
-            dto.setQtyOut(log.getQtyOut());
-            dto.setClosingStock(log.getClosingStock());
-            dto.setAuthorizedBy(log.getAuthorizedBy());
-            dto.setRemarks(log.getRemarks());
-            
+        return inventoryLogRepository.findAllByOrderByCreatedAtDesc().stream().map(this::mapToLogDto).collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<InventoryLogDto> getAllBinLogs(Pageable pageable) {
+        log.info("Fetching all bin logs with pageable: {}", pageable);
+        if (pageable == null || pageable.isUnpaged()) {
+            List<InventoryLogDto> list = getAllBinLogs();
+            return new PageImpl<>(list, Pageable.unpaged(), list.size());
+        }
+        return inventoryLogRepository.findAllByOrderByCreatedAtDesc(pageable).map(this::mapToLogDto);
+    }
+
+    private InventoryLogDto mapToLogDto(InventoryLog logEntry) {
+        InventoryLogDto dto = new InventoryLogDto();
+        dto.setId(logEntry.getId());
+        dto.setTransactionDate(logEntry.getTransactionDate());
+        dto.setOpeningStock(logEntry.getOpeningStock());
+        dto.setQtyIn(logEntry.getQtyIn());
+        dto.setQtyOut(logEntry.getQtyOut());
+        dto.setClosingStock(logEntry.getClosingStock());
+        dto.setAuthorizedBy(logEntry.getAuthorizedBy());
+        dto.setRemarks(logEntry.getRemarks());
+        
+        if (logEntry.getItem() != null) {
             ItemDto itemDto = new ItemDto();
-            itemDto.setId(log.getItem().getId());
-            itemDto.setName(log.getItem().getName());
-            itemDto.setUnitOfMeasure(log.getItem().getUnitOfMeasure());
+            itemDto.setId(logEntry.getItem().getId());
+            itemDto.setName(logEntry.getItem().getName());
+            itemDto.setUnitOfMeasure(logEntry.getItem().getUnitOfMeasure());
             dto.setItem(itemDto);
-            
-            return dto;
-        }).collect(Collectors.toList());
+        }
+        
+        return dto;
     }
 }
