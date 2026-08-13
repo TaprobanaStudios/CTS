@@ -7,8 +7,6 @@ import {
   Paper,
   Chip,
   Button,
-  TextField,
-  InputAdornment,
   Table,
   TableHead,
   TableBody,
@@ -24,15 +22,68 @@ import {
   Tooltip,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
-import SearchIcon from "@mui/icons-material/Search";
+import SearchBar from "../../components/search/SearchBar";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import TrendingDownIcon from "@mui/icons-material/TrendingDown";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorIcon from "@mui/icons-material/Error";
-import FactoryOutlinedIcon from "@mui/icons-material/FactoryOutlined";
 import ReportProblemOutlinedIcon from "@mui/icons-material/ReportProblemOutlined";
+
+export type ProductionStatusType =
+  | "STORED"
+  | "SOLD"
+  | "CURING"
+  | "DISPATCHED"
+  | "CONSUMED";
+
+export const STATUS_CONFIG: Record<
+  ProductionStatusType,
+  { label: string; bg: string; color: string; border: string }
+> = {
+  STORED: {
+    label: "Stored",
+    bg: "#ECFDF5",
+    color: "#059669",
+    border: "rgba(16, 185, 129, 0.2)",
+  },
+  SOLD: {
+    label: "Sold",
+    bg: "#EFF6FF",
+    color: "#2563EB",
+    border: "rgba(37, 99, 235, 0.2)",
+  },
+  CURING: {
+    label: "Curing",
+    bg: "#FFFBEB",
+    color: "#D97706",
+    border: "rgba(217, 119, 6, 0.2)",
+  },
+  DISPATCHED: {
+    label: "Dispatched",
+    bg: "#F5F3FF",
+    color: "#7C3AED",
+    border: "rgba(124, 58, 237, 0.2)",
+  },
+  CONSUMED: {
+    label: "Consumed",
+    bg: "#FFF7ED",
+    color: "#C2410C",
+    border: "rgba(234, 88, 12, 0.2)",
+  },
+};
+
+export interface MaterialUsageDto {
+  itemId: string;
+  itemName: string;
+  amount: number;
+}
+
+export interface ProductUsageDto {
+  productName: string;
+  amount: number;
+}
 
 export interface ProductionLedgerRow {
   id: string;
@@ -43,8 +94,12 @@ export interface ProductionLedgerRow {
   qtyOut: number;
   damage: number;
   closingStock: number;
-  workerName: string;
+  status: ProductionStatusType;
+  materials?: MaterialUsageDto[];
+  productUsages?: ProductUsageDto[];
+  workerName?: string;
   remarks: string;
+  type: "PRODUCTION" | "CONSUMPTION";
 }
 
 export interface ProductItem {
@@ -90,6 +145,47 @@ export default function ProductionBinCardDetailView({
     setOrderBy(property);
   };
 
+  // Helper to extract structured list of inputs for a row
+  const getRowInputs = (row: ProductionLedgerRow) => {
+    if (row.type === "CONSUMPTION") {
+      return [];
+    }
+    const items: { name: string; amount: number | string; isProduct: boolean }[] = [];
+    if (row.materials && Array.isArray(row.materials)) {
+      row.materials.forEach((m) => {
+        if (m.itemName && m.amount !== undefined && m.amount !== null) {
+          items.push({
+            name: m.itemName,
+            amount: m.amount,
+            isProduct: false,
+          });
+        }
+      });
+    }
+    if (row.productUsages && Array.isArray(row.productUsages)) {
+      row.productUsages.forEach((pu) => {
+        if (pu.productName && pu.amount !== undefined && pu.amount !== null) {
+          items.push({
+            name: pu.productName,
+            amount: pu.amount,
+            isProduct: true,
+          });
+        }
+      });
+    }
+    return items;
+  };
+
+  // Helper for inputs summary text (for search query filtering)
+  const getInputsSummary = (row: ProductionLedgerRow) => {
+    if (row.type === "CONSUMPTION") {
+      return "-";
+    }
+    const inputs = getRowInputs(row);
+    if (inputs.length === 0) return "-";
+    return inputs.map((i) => `${i.name}: ${i.amount}`).join(", ");
+  };
+
   // Filtered & sorted ledger rows
   const filteredLedgerRows = useMemo(() => {
     return ledgerRows
@@ -104,9 +200,18 @@ export default function ProductionBinCardDetailView({
         if (detailSearchQuery.trim()) {
           const q = detailSearchQuery.toLowerCase();
           const matchesProd = row.productName.toLowerCase().includes(q);
-          const matchesWorker = row.workerName.toLowerCase().includes(q);
-          const matchesRemarks = row.remarks.toLowerCase().includes(q);
-          if (!matchesProd && !matchesWorker && !matchesRemarks) return false;
+          const matchesStatus = row.status?.toLowerCase().includes(q);
+          const matchesRemarks = row.remarks?.toLowerCase().includes(q);
+          const matchesWorker = row.workerName?.toLowerCase().includes(q);
+          const matchesInputs = getInputsSummary(row).toLowerCase().includes(q);
+          if (
+            !matchesProd &&
+            !matchesStatus &&
+            !matchesRemarks &&
+            !matchesWorker &&
+            !matchesInputs
+          )
+            return false;
         }
 
         return true;
@@ -143,14 +248,14 @@ export default function ProductionBinCardDetailView({
           startIcon={<ArrowBackIcon sx={{ fontSize: 18 }} />}
           onClick={onBack}
           sx={{
-            borderRadius: "8px",
+            borderRadius: "10px",
             borderColor: "#CBD5E1",
             color: "#334155",
-            fontWeight: 600,
+            fontWeight: 700,
             fontSize: "0.825rem",
             textTransform: "none",
-            px: 1.75,
-            height: 36,
+            px: 2,
+            height: 38,
             bgcolor: "#FFFFFF",
             boxShadow: "none",
             "&:hover": {
@@ -170,9 +275,9 @@ export default function ProductionBinCardDetailView({
             sx={{
               bgcolor: "#FFFFFF",
               border: "1px solid #E2E8F0",
-              borderRadius: "8px",
-              width: 36,
-              height: 36,
+              borderRadius: "10px",
+              width: 38,
+              height: 38,
               color: "#475569",
               boxShadow: "none",
               "&:hover": {
@@ -208,7 +313,7 @@ export default function ProductionBinCardDetailView({
           <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
             <Typography
               variant="h4"
-              sx={{ color: "#0F172A", m: 0, lineHeight: 1, fontWeight: 800 }}
+              sx={{ color: "#0F172A", m: 0, lineHeight: 1.1, fontWeight: 800 }}
             >
               {activeProduct
                 ? activeProduct.productName
@@ -219,10 +324,10 @@ export default function ProductionBinCardDetailView({
                 icon={
                   activeProduct.currentStock > 0 ? (
                     <CheckCircleIcon
-                      style={{ color: "#10B981", fontSize: 12 }}
+                      style={{ color: "#10B981", fontSize: 13 }}
                     />
                   ) : (
-                    <ErrorIcon style={{ color: "#EF4444", fontSize: 12 }} />
+                    <ErrorIcon style={{ color: "#EF4444", fontSize: 13 }} />
                   )
                 }
                 label={
@@ -233,7 +338,7 @@ export default function ProductionBinCardDetailView({
                     activeProduct.currentStock > 0 ? "#ECFDF5" : "#FEF2F2",
                   color: activeProduct.currentStock > 0 ? "#065F46" : "#991B1B",
                   fontWeight: 700,
-                  fontSize: "0.65rem",
+                  fontSize: "0.7rem",
                   height: 24,
                   border: "1px solid",
                   borderColor:
@@ -249,11 +354,11 @@ export default function ProductionBinCardDetailView({
           >
             {activeProduct
               ? `SKU ID: PROD-${activeProduct.productId.toUpperCase()}`
-              : "Aggregated production, scrap, and dispatch records for all manufactured items"}
+              : "Unified record of all manufacturing output, material deductions, component usage, and scrap"}
           </Typography>
         </Box>
 
-        {/* Current Balance widget (hidden for All Products Combined Ledger) */}
+        {/* Current Balance widget */}
         {!isAllProducts && activeProduct && (
           <Box
             sx={{
@@ -262,7 +367,7 @@ export default function ProductionBinCardDetailView({
               p: 1.5,
               px: 2.5,
               bgcolor: "#F8FAFC",
-              borderRadius: "12px",
+              borderRadius: "14px",
               border: "1px solid #E2E8F0",
               minWidth: 160,
               boxShadow: "none",
@@ -284,7 +389,12 @@ export default function ProductionBinCardDetailView({
               <Box sx={{ display: "flex", alignItems: "baseline", gap: 0.75 }}>
                 <Typography
                   variant="h4"
-                  sx={{ fontWeight: 800, color: "#0F172A", lineHeight: 1 }}
+                  sx={{
+                    fontWeight: 800,
+                    color:
+                      activeProduct.currentStock <= 0 ? "#EF4444" : "#0F172A",
+                    lineHeight: 1,
+                  }}
                 >
                   {activeProduct.currentStock}
                 </Typography>
@@ -332,13 +442,13 @@ export default function ProductionBinCardDetailView({
             sx={{
               minHeight: 36,
               bgcolor: "#F1F5F9",
-              borderRadius: "8px",
+              borderRadius: "10px",
               p: 0.5,
               "& .MuiTabs-indicator": {
-                bgcolor: "#e9e9e9ff",
+                bgcolor: "#FFFFFF",
                 height: "100%",
-                borderRadius: "6px",
-                boxShadow: "none",
+                borderRadius: "8px",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
                 zIndex: 0,
               },
             }}
@@ -355,12 +465,12 @@ export default function ProductionBinCardDetailView({
                 fontWeight: 600,
                 textTransform: "none",
                 color: "#64748B",
-                "&.Mui-selected": { color: "#0F172A" },
+                "&.Mui-selected": { color: "#0F172A", fontWeight: 700 },
               }}
             />
             <Tab
               value="in"
-              label="Production In"
+              label="Production In (+)"
               sx={{
                 minHeight: 32,
                 py: 0,
@@ -370,12 +480,12 @@ export default function ProductionBinCardDetailView({
                 fontWeight: 600,
                 textTransform: "none",
                 color: "#64748B",
-                "&.Mui-selected": { color: "#059669" },
+                "&.Mui-selected": { color: "#059669", fontWeight: 700 },
               }}
             />
             <Tab
               value="out"
-              label="Out"
+              label="Consumed / Out (-)"
               sx={{
                 minHeight: 32,
                 py: 0,
@@ -385,12 +495,12 @@ export default function ProductionBinCardDetailView({
                 fontWeight: 600,
                 textTransform: "none",
                 color: "#64748B",
-                "&.Mui-selected": { color: "#EA580C" },
+                "&.Mui-selected": { color: "#EA580C", fontWeight: 700 },
               }}
             />
             <Tab
               value="damage"
-              label="Damage"
+              label="Damages (-)"
               sx={{
                 minHeight: 32,
                 py: 0,
@@ -400,43 +510,16 @@ export default function ProductionBinCardDetailView({
                 fontWeight: 600,
                 textTransform: "none",
                 color: "#64748B",
-                "&.Mui-selected": { color: "#DC2626" },
+                "&.Mui-selected": { color: "#DC2626", fontWeight: 700 },
               }}
             />
           </Tabs>
 
-          <TextField
-            size="small"
-            placeholder="Search"
+          <SearchBar
             value={detailSearchQuery}
-            onChange={(e) => setDetailSearchQuery(e.target.value)}
-            slotProps={{
-              input: {
-                startAdornment: (
-                  <InputAdornment position="start" sx={{ mr: 1 }}>
-                    <SearchIcon
-                      sx={{
-                        fontSize: 17,
-                        color: detailSearchQuery ? "#2563EB" : "#64748B",
-                      }}
-                    />
-                  </InputAdornment>
-                ),
-              },
-            }}
-            sx={{
-              maxWidth: { xs: "100%", sm: 300 },
-              "& .MuiOutlinedInput-root": {
-                borderRadius: "8px",
-                bgcolor: "#F8FAFC",
-                fontSize: "0.85rem",
-                height: 36,
-                boxShadow: "none",
-                "& fieldset": { borderColor: "#E2E8F0" },
-                "&:hover fieldset": { borderColor: "#CBD5E1" },
-                "&.Mui-focused fieldset": { borderColor: "#2563EB" },
-              },
-            }}
+            onChange={setDetailSearchQuery}
+            placeholder="Search date, product, status, inputs..."
+            maxWidth={{ xs: "100%", sm: 320 }}
           />
         </Box>
 
@@ -449,35 +532,37 @@ export default function ProductionBinCardDetailView({
               "& .MuiTableCell-root": {
                 borderRight: "1px solid #dfe2e6ff",
                 borderBottom: "1px solid #dfe2e6ff !important",
-              },
-              "& .MuiTableCell-root:last-child": {
-                borderRight: "none",
+                px: 1,
               },
               "& .MuiTableHead-root .MuiTableCell-root": {
                 borderRight: "1px solid #dfe2e6ff",
                 borderBottom: "1px solid #dfe2e6ff !important",
                 borderTop: "1px solid #dfe2e6ff",
+                bgcolor: "#F8FAFC",
+                color: "#475569",
+                fontWeight: 700,
+                fontSize: "0.75rem",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                whiteSpace: "nowrap",
+                py: 1.2,
               },
-              "& .MuiTableHead-root .MuiTableCell-root:last-child": {
-                borderRight: "none",
+              "& .MuiTableHead-root .MuiTableRow-root:first-of-type .MuiTableCell-root": {
+                top: 0,
+                zIndex: 3,
+              },
+              "& .MuiTableHead-root .MuiTableRow-root:nth-of-type(2) .MuiTableCell-root": {
+                top: "37px",
+                zIndex: 2,
+                bgcolor: "#F8FAFC",
+                fontSize: "0.7rem",
+                py: 0.8,
               },
             }}
           >
             <TableHead>
               <TableRow>
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    whiteSpace: "nowrap",
-                    py: 1.5,
-                  }}
-                >
+                <TableCell align="center" rowSpan={2}>
                   <TableSortLabel
                     active={orderBy === "date"}
                     direction={orderBy === "date" ? order : "asc"}
@@ -488,120 +573,46 @@ export default function ProductionBinCardDetailView({
                 </TableCell>
 
                 {isAllProducts && (
-                  <TableCell
-                    align="center"
-                    sx={{
-                      bgcolor: "#F8FAFC",
-                      color: "#475569",
-                      fontWeight: 700,
-                      fontSize: "0.75rem",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
-                      whiteSpace: "nowrap",
-                      py: 1.5,
-                    }}
-                  >
+                  <TableCell align="center" rowSpan={2}>
                     Product
                   </TableCell>
                 )}
 
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    whiteSpace: "nowrap",
-                  }}
-                >
+                <TableCell align="center" rowSpan={2}>
+                  Status
+                </TableCell>
+
+                <TableCell align="center" rowSpan={2}>
                   O/S
                 </TableCell>
 
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  In
+                <TableCell align="center" rowSpan={2}>
+                  In (+)
                 </TableCell>
 
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Out
+                <TableCell align="center" rowSpan={2}>
+                  Out / Consumed (-)
                 </TableCell>
 
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Damage
+                <TableCell align="center" rowSpan={2}>
+                  Damages (-)
                 </TableCell>
 
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Closing Balance
+                <TableCell align="center" rowSpan={2}>
+                  Closing Stock
                 </TableCell>
 
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Operator / Worker
+                <TableCell align="center" colSpan={2}>
+                  Inputs Used
                 </TableCell>
 
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Remarks / Reference
+                <TableCell align="center" rowSpan={2} sx={{ borderRight: "none !important" }}>
+                  Remarks
                 </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell align="center">Name</TableCell>
+                <TableCell align="center">Amount</TableCell>
               </TableRow>
             </TableHead>
 
@@ -609,7 +620,7 @@ export default function ProductionBinCardDetailView({
               {loading ? (
                 <TableRow>
                   <TableCell
-                    colSpan={isAllProducts ? 9 : 8}
+                    colSpan={isAllProducts ? 11 : 10}
                     align="center"
                     sx={{ py: 8 }}
                   >
@@ -625,7 +636,7 @@ export default function ProductionBinCardDetailView({
               ) : filteredLedgerRows.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={isAllProducts ? 9 : 8}
+                    colSpan={isAllProducts ? 11 : 10}
                     align="center"
                     sx={{ py: 8 }}
                   >
@@ -646,11 +657,6 @@ export default function ProductionBinCardDetailView({
                       >
                         No Production Records Found
                       </Typography>
-                      <Typography variant="body2" sx={{ color: "#94A3B8" }}>
-                        {activeProduct
-                          ? `No batch movements recorded for ${activeProduct.productName} yet.`
-                          : "No production records found."}
-                      </Typography>
                     </Box>
                   </TableCell>
                 </TableRow>
@@ -661,216 +667,339 @@ export default function ProductionBinCardDetailView({
                     const isInflow = row.qtyIn > 0;
                     const isOutflow = row.qtyOut > 0;
                     const isDamaged = row.damage > 0;
+                    const stConfig =
+                      STATUS_CONFIG[row.status] || STATUS_CONFIG.STORED;
+                    const rowInputs = getRowInputs(row);
+                    const rowCount = Math.max(1, rowInputs.length);
 
                     return (
-                      <TableRow
-                        key={row.id}
-                        hover
-                        sx={{
-                          "&:hover": { bgcolor: "#F8FAFC !important" },
-                          transition: "background-color 0.15s ease",
-                        }}
-                      >
-                        {/* Date */}
-                        <TableCell
-                          align="center"
-                          sx={{
-                            py: 1.8,
-                            fontSize: "0.875rem",
-                            color: "#334155",
-                            fontWeight: 500,
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {new Date(row.date).toLocaleDateString("en-US", {
-                            year: "numeric",
-                            month: "short",
-                            day: "numeric",
-                          })}
-                        </TableCell>
+                      <React.Fragment key={row.id}>
+                        {Array.from({ length: rowCount }).map((_, subIdx) => {
+                          const isFirstSub = subIdx === 0;
 
-                        {/* Product Name (All mode) */}
-                        {isAllProducts && (
-                          <TableCell
-                            align="center"
-                            sx={{
-                              py: 1.8,
-                              fontSize: "0.875rem",
-                              color: "#1E293B",
-                              fontWeight: 600,
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {row.productName}
-                          </TableCell>
-                        )}
-
-                        {/* O/S */}
-                        <TableCell
-                          align="center"
-                          sx={{
-                            py: 1.8,
-                            fontSize: "0.875rem",
-                            color: "#64748B",
-                            fontWeight: 500,
-                          }}
-                        >
-                          {row.openingStock}
-                        </TableCell>
-
-                        {/* In */}
-                        <TableCell
-                          align="center"
-                          sx={{ py: 1.8, whiteSpace: "nowrap" }}
-                        >
-                          {isInflow ? (
-                            <Chip
-                              icon={
-                                <TrendingUpIcon
-                                  style={{ color: "#059669", fontSize: 15 }}
-                                />
-                              }
-                              label={`+${row.qtyIn}`}
-                              size="small"
+                          return (
+                            <TableRow
+                              key={`${row.id}-sub-${subIdx}`}
+                              hover
                               sx={{
-                                bgcolor: "#ECFDF5",
-                                color: "#059669",
-                                fontWeight: 700,
-                                fontSize: "0.8rem",
-                                border: "1px solid rgba(16, 185, 129, 0.2)",
-                                height: 24,
-                                boxShadow: "none",
+                                "&:hover": { bgcolor: "#F8FAFC !important" },
+                                transition: "background-color 0.15s ease",
                               }}
-                            />
-                          ) : (
-                            "-"
-                          )}
-                        </TableCell>
-
-                        {/* Out */}
-                        <TableCell
-                          align="center"
-                          sx={{ py: 1.8, whiteSpace: "nowrap" }}
-                        >
-                          {isOutflow ? (
-                            <Chip
-                              icon={
-                                <TrendingDownIcon
-                                  style={{ color: "#EA580C", fontSize: 15 }}
-                                />
-                              }
-                              label={`-${row.qtyOut}`}
-                              size="small"
-                              sx={{
-                                bgcolor: "#FFF7ED",
-                                color: "#EA580C",
-                                fontWeight: 700,
-                                fontSize: "0.8rem",
-                                border: "1px solid rgba(234, 88, 12, 0.2)",
-                                height: 24,
-                                boxShadow: "none",
-                              }}
-                            />
-                          ) : (
-                            "-"
-                          )}
-                        </TableCell>
-
-                        {/* Damage */}
-                        <TableCell
-                          align="center"
-                          sx={{ py: 1.8, whiteSpace: "nowrap" }}
-                        >
-                          {isDamaged ? (
-                            <Chip
-                              icon={
-                                <ReportProblemOutlinedIcon
-                                  style={{ color: "#DC2626", fontSize: 15 }}
-                                />
-                              }
-                              label={`-${row.damage}`}
-                              size="small"
-                              sx={{
-                                bgcolor: "#FEF2F2",
-                                color: "#DC2626",
-                                fontWeight: 700,
-                                fontSize: "0.8rem",
-                                border: "1px solid rgba(239, 68, 68, 0.2)",
-                                height: 24,
-                                boxShadow: "none",
-                              }}
-                            />
-                          ) : (
-                            "-"
-                          )}
-                        </TableCell>
-
-                        {/* Closing Balance */}
-                        <TableCell align="center" sx={{ py: 1.8 }}>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              fontWeight: 800,
-                              color: "#0F172A",
-                              fontSize: "0.9rem",
-                            }}
-                          >
-                            {row.closingStock}
-                          </Typography>
-                        </TableCell>
-
-                        {/* Worker */}
-                        <TableCell
-                          align="center"
-                          sx={{
-                            py: 1.8,
-                            fontSize: "0.875rem",
-                            fontWeight: 600,
-                            color: "#334155",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {row.workerName}
-                        </TableCell>
-
-                        {/* Remarks */}
-                        <TableCell
-                          align="center"
-                          sx={{ py: 1.8, minWidth: 220 }}
-                        >
-                          <Box
-                            sx={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              gap: 1,
-                            }}
-                          >
-                            <Chip
-                              icon={
-                                <FactoryOutlinedIcon style={{ fontSize: 13 }} />
-                              }
-                              label="Production"
-                              size="small"
-                              sx={{
-                                height: 20,
-                                fontSize: "0.7rem",
-                                fontWeight: 600,
-                                bgcolor: "#EEF2FF",
-                                color: "#4F46E5",
-                                border: "1px solid rgba(99, 102, 241, 0.2)",
-                                boxShadow: "none",
-                              }}
-                            />
-                            <Typography
-                              variant="body2"
-                              sx={{ color: "#475569", fontSize: "0.85rem" }}
                             >
-                              {row.remarks}
-                            </Typography>
-                          </Box>
-                        </TableCell>
-                      </TableRow>
+                              {/* Date */}
+                              {isFirstSub && (
+                                <TableCell
+                                  align="center"
+                                  rowSpan={rowCount}
+                                  sx={{
+                                    py: 1.8,
+                                    fontSize: "0.875rem",
+                                    color: "#334155",
+                                    fontWeight: 500,
+                                    whiteSpace: "nowrap",
+                                    verticalAlign: "middle",
+                                  }}
+                                >
+                                  {new Date(row.date).toLocaleDateString(
+                                    "en-US",
+                                    {
+                                      year: "numeric",
+                                      month: "short",
+                                      day: "numeric",
+                                    },
+                                  )}
+                                </TableCell>
+                              )}
+
+                              {/* Product Name (All mode) */}
+                              {isAllProducts && isFirstSub && (
+                                <TableCell
+                                  align="center"
+                                  rowSpan={rowCount}
+                                  sx={{
+                                    py: 1.8,
+                                    fontSize: "0.875rem",
+                                    color: "#0F172A",
+                                    fontWeight: 600,
+                                    whiteSpace: "nowrap",
+                                    verticalAlign: "middle",
+                                  }}
+                                >
+                                  {row.productName}
+                                </TableCell>
+                              )}
+
+                              {/* Status Chip */}
+                              {isFirstSub && (
+                                <TableCell
+                                  align="center"
+                                  rowSpan={rowCount}
+                                  sx={{
+                                    py: 1.8,
+                                    whiteSpace: "nowrap",
+                                    verticalAlign: "middle",
+                                  }}
+                                >
+                                  <Chip
+                                    label={stConfig.label}
+                                    size="small"
+                                    sx={{
+                                      bgcolor: stConfig.bg,
+                                      color: stConfig.color,
+                                      fontWeight: 700,
+                                      fontSize: "0.75rem",
+                                      border: `1px solid ${stConfig.border}`,
+                                      height: 24,
+                                      boxShadow: "none",
+                                    }}
+                                  />
+                                </TableCell>
+                              )}
+
+                              {/* O/S */}
+                              {isFirstSub && (
+                                <TableCell
+                                  align="center"
+                                  rowSpan={rowCount}
+                                  sx={{
+                                    py: 1.8,
+                                    fontSize: "0.875rem",
+                                    color: "#64748B",
+                                    fontWeight: 500,
+                                    verticalAlign: "middle",
+                                  }}
+                                >
+                                  {row.openingStock}
+                                </TableCell>
+                              )}
+
+                              {/* In */}
+                              {isFirstSub && (
+                                <TableCell
+                                  align="center"
+                                  rowSpan={rowCount}
+                                  sx={{
+                                    py: 1.8,
+                                    whiteSpace: "nowrap",
+                                    verticalAlign: "middle",
+                                  }}
+                                >
+                                  {isInflow ? (
+                                    <Chip
+                                      icon={
+                                        <TrendingUpIcon
+                                          style={{
+                                            color: "#059669",
+                                            fontSize: 14,
+                                          }}
+                                        />
+                                      }
+                                      label={`+${row.qtyIn}`}
+                                      size="small"
+                                      sx={{
+                                        bgcolor: "#ECFDF5",
+                                        color: "#059669",
+                                        fontWeight: 700,
+                                        fontSize: "0.8rem",
+                                        border:
+                                          "1px solid rgba(16, 185, 129, 0.2)",
+                                        height: 24,
+                                        boxShadow: "none",
+                                      }}
+                                    />
+                                  ) : (
+                                    "-"
+                                  )}
+                                </TableCell>
+                              )}
+
+                              {/* Out */}
+                              {isFirstSub && (
+                                <TableCell
+                                  align="center"
+                                  rowSpan={rowCount}
+                                  sx={{
+                                    py: 1.8,
+                                    whiteSpace: "nowrap",
+                                    verticalAlign: "middle",
+                                  }}
+                                >
+                                  {isOutflow ? (
+                                    <Chip
+                                      icon={
+                                        <TrendingDownIcon
+                                          style={{
+                                            color: "#EA580C",
+                                            fontSize: 14,
+                                          }}
+                                        />
+                                      }
+                                      label={`-${row.qtyOut}`}
+                                      size="small"
+                                      sx={{
+                                        bgcolor: "#FFF7ED",
+                                        color: "#EA580C",
+                                        fontWeight: 700,
+                                        fontSize: "0.8rem",
+                                        border:
+                                          "1px solid rgba(234, 88, 12, 0.2)",
+                                        height: 24,
+                                        boxShadow: "none",
+                                      }}
+                                    />
+                                  ) : (
+                                    "-"
+                                  )}
+                                </TableCell>
+                              )}
+
+                              {/* Damage */}
+                              {isFirstSub && (
+                                <TableCell
+                                  align="center"
+                                  rowSpan={rowCount}
+                                  sx={{
+                                    py: 1.8,
+                                    whiteSpace: "nowrap",
+                                    verticalAlign: "middle",
+                                  }}
+                                >
+                                  {isDamaged ? (
+                                    <Chip
+                                      icon={
+                                        <ReportProblemOutlinedIcon
+                                          style={{
+                                            color: "#DC2626",
+                                            fontSize: 14,
+                                          }}
+                                        />
+                                      }
+                                      label={`-${row.damage}`}
+                                      size="small"
+                                      sx={{
+                                        bgcolor: "#FEF2F2",
+                                        color: "#DC2626",
+                                        fontWeight: 700,
+                                        fontSize: "0.8rem",
+                                        border:
+                                          "1px solid rgba(239, 68, 68, 0.2)",
+                                        height: 24,
+                                        boxShadow: "none",
+                                      }}
+                                    />
+                                  ) : (
+                                    "-"
+                                  )}
+                                </TableCell>
+                              )}
+
+                              {/* Closing Balance */}
+                              {isFirstSub && (
+                                <TableCell
+                                  align="center"
+                                  rowSpan={rowCount}
+                                  sx={{ py: 1.8, verticalAlign: "middle" }}
+                                >
+                                  <Typography
+                                    variant="body2"
+                                    sx={{
+                                      fontWeight: 800,
+                                      color: "#0F172A",
+                                      fontSize: "0.9rem",
+                                    }}
+                                  >
+                                    {row.closingStock}
+                                  </Typography>
+                                </TableCell>
+                              )}
+
+                              {/* Inputs Used - Name & Amount */}
+                              {rowInputs.length === 0 ? (
+                                isFirstSub && (
+                                  <>
+                                    <TableCell
+                                      align="center"
+                                      rowSpan={rowCount}
+                                      sx={{
+                                        py: 1.5,
+                                        fontSize: "0.8125rem",
+                                        color: "#94A3B8",
+                                        minWidth: 100,
+                                        verticalAlign: "middle",
+                                      }}
+                                    >
+                                      -
+                                    </TableCell>
+                                    <TableCell
+                                      align="center"
+                                      rowSpan={rowCount}
+                                      sx={{
+                                        py: 1.5,
+                                        fontSize: "0.8125rem",
+                                        color: "#94A3B8",
+                                        minWidth: 70,
+                                        verticalAlign: "middle",
+                                      }}
+                                    >
+                                      -
+                                    </TableCell>
+                                  </>
+                                )
+                              ) : (
+                                <>
+                                  <TableCell
+                                    align="center"
+                                    sx={{
+                                      py: 1.5,
+                                      fontSize: "0.8125rem",
+                                      fontWeight: 600,
+                                      color: rowInputs[subIdx].isProduct
+                                        ? "#2563EB"
+                                        : "#334155",
+                                      minWidth: 100,
+                                      verticalAlign: "middle",
+                                    }}
+                                  >
+                                    {rowInputs[subIdx].name}
+                                  </TableCell>
+                                  <TableCell
+                                    align="center"
+                                    sx={{
+                                      py: 1.5,
+                                      fontSize: "0.8125rem",
+                                      fontWeight: 700,
+                                      color: "#16A34A",
+                                      minWidth: 70,
+                                      verticalAlign: "middle",
+                                    }}
+                                  >
+                                    {rowInputs[subIdx].amount}
+                                  </TableCell>
+                                </>
+                              )}
+
+                              {/* Remarks */}
+                              {isFirstSub && (
+                                <TableCell
+                                  align="center"
+                                  rowSpan={rowCount}
+                                  sx={{
+                                    py: 1.8,
+                                    fontSize: "0.825rem",
+                                    color: "#64748B",
+                                    minWidth: 160,
+                                    whiteSpace: "normal",
+                                    verticalAlign: "middle",
+                                    borderRight: "none !important",
+                                  }}
+                                >
+                                  {row.remarks}
+                                </TableCell>
+                              )}
+                            </TableRow>
+                          );
+                        })}
+                      </React.Fragment>
                     );
                   })
               )}

@@ -24,7 +24,7 @@ public class DailyProductionReport extends Auditable<String> {
     @Column(name = "report_date", nullable = false)
     private LocalDate reportDate;
 
-    @Column(name = "worker_name", nullable = false)
+    @Column(name = "worker_name", nullable = true)
     private String workerName;
 
     @OneToMany(mappedBy = "dailyProductionReport", cascade = CascadeType.ALL, orphanRemoval = true)

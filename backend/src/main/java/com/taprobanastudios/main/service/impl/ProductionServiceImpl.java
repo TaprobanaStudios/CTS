@@ -26,6 +26,11 @@ import com.taprobanastudios.main.model.Item;
 import com.taprobanastudios.main.dto.MaterialUsageDto;
 import jakarta.persistence.EntityNotFoundException;
 
+import com.taprobanastudios.main.model.enums.ProductionStatus;
+
+import com.taprobanastudios.main.dto.ProductUsageDto;
+import com.taprobanastudios.main.model.ProductionProductUsage;
+
 @Service
 @Slf4j
 @RequiredArgsConstructor
@@ -46,6 +51,7 @@ public class ProductionServiceImpl implements ProductionService {
             dto.setWorkerName(item.getDailyProductionReport().getWorkerName());
             dto.setProductType(item.getProductType());
             dto.setQtyProduced(item.getQtyProduced());
+            dto.setStatus(item.getStatus() != null ? item.getStatus() : ProductionStatus.STORED);
             dto.setDamages(item.getDamages());
 
             if (item.getMaterialUsages() != null) {
@@ -55,6 +61,15 @@ public class ProductionServiceImpl implements ProductionService {
                     usageDto.setItemName(usage.getItem().getName());
                     usageDto.setAmount(usage.getAmount());
                     return usageDto;
+                }).collect(Collectors.toList()));
+            }
+
+            if (item.getProductUsages() != null) {
+                dto.setProductUsages(item.getProductUsages().stream().map(pu -> {
+                    ProductUsageDto puDto = new ProductUsageDto();
+                    puDto.setProductName(pu.getProductName());
+                    puDto.setAmount(pu.getAmount());
+                    return puDto;
                 }).collect(Collectors.toList()));
             }
 
@@ -77,6 +92,7 @@ public class ProductionServiceImpl implements ProductionService {
                 item.setDailyProductionReport(report);
                 item.setProductType(dto.getProductType());
                 item.setQtyProduced(dto.getQtyProduced());
+                item.setStatus(dto.getStatus() != null ? dto.getStatus() : ProductionStatus.STORED);
                 item.setDamages(dto.getDamages());
 
                 if (dto.getMaterials() != null) {
@@ -90,6 +106,17 @@ public class ProductionServiceImpl implements ProductionService {
                         return usage;
                     }).collect(Collectors.toList());
                     item.setMaterialUsages(usages);
+                }
+
+                if (dto.getProductUsages() != null) {
+                    List<ProductionProductUsage> pUsages = dto.getProductUsages().stream().map(puDto -> {
+                        ProductionProductUsage pu = new ProductionProductUsage();
+                        pu.setProductionItem(item);
+                        pu.setProductName(puDto.getProductName());
+                        pu.setAmount(puDto.getAmount());
+                        return pu;
+                    }).collect(Collectors.toList());
+                    item.setProductUsages(pUsages);
                 }
 
                 return item;
@@ -124,7 +151,7 @@ public class ProductionServiceImpl implements ProductionService {
             StockOperationRequestDto requestDto = new StockOperationRequestDto();
             requestDto.setItemName(itemName);
             requestDto.setAmount(amount);
-            requestDto.setAuthorizedBy(workerName);
+            requestDto.setAuthorizedBy(workerName != null && !workerName.trim().isEmpty() ? workerName : "Daily Production");
             requestDto.setRemarks(remarks);
             
             inventoryService.deductStock(requestDto);

@@ -28,7 +28,7 @@ import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
 import Collapse from "@mui/material/Collapse";
 
-const drawerWidth = 260;
+const drawerWidth = 200;
 
 interface Props {
   children: React.ReactNode;
@@ -61,16 +61,16 @@ export default function DashboardLayout({ children }: Props) {
   };
 
   const navItems = [
-    { text: "Overview", icon: <DashboardIcon />, path: "/dashboard" },
-    { text: "Workers", icon: <PeopleIcon />, path: "/dashboard/workers" },
+    { text: "Overview", icon: <DashboardIcon sx={{ fontSize: 20 }} />, path: "/dashboard" },
+    { text: "Workers", icon: <PeopleIcon sx={{ fontSize: 20 }} />, path: "/dashboard/workers" },
     {
       text: "Inventory",
-      icon: <InventoryIcon />,
+      icon: <InventoryIcon sx={{ fontSize: 20 }} />,
       path: "/dashboard/inventory",
     },
     {
       text: "Bin Cards",
-      icon: <ReceiptLongIcon />,
+      icon: <ReceiptLongIcon sx={{ fontSize: 20 }} />,
       path: "/dashboard/bin-cards",
       children: [
         { text: "Material Bin Card", path: "/dashboard/bin-cards/material" },
@@ -82,7 +82,7 @@ export default function DashboardLayout({ children }: Props) {
     },
     {
       text: "Production",
-      icon: <AssessmentIcon />,
+      icon: <AssessmentIcon sx={{ fontSize: 20 }} />,
       path: "/dashboard/production",
     },
   ];
@@ -97,16 +97,16 @@ export default function DashboardLayout({ children }: Props) {
         color: "#fff",
       }}
     >
-      <Box sx={{ p: 3, display: "flex", alignItems: "center", gap: 1 }}>
+      <Box sx={{ p: 2, px: 2.5, display: "flex", alignItems: "center", gap: 1 }}>
         <Typography
-          variant="h5"
+          variant="h6"
           sx={{ fontWeight: "bold", letterSpacing: 1, color: "white" }}
         >
           DNS
         </Typography>
       </Box>
 
-      <List sx={{ flexGrow: 1, px: 2 }}>
+      <List sx={{ flexGrow: 1, px: 1 }}>
         {navItems.map((item) => {
           const hasChildren = Boolean(
             item.children && item.children.length > 0,
@@ -131,8 +131,8 @@ export default function DashboardLayout({ children }: Props) {
                   }}
                   sx={{
                     borderRadius: "8px",
-                    py: 1,
-                    px: 1.5,
+                    py: 0.8,
+                    px: 1.2,
                     "&.Mui-selected": {
                       bgcolor: "rgba(255, 255, 255, 0.08)",
                       "&:hover": { bgcolor: "rgba(255, 255, 255, 0.12)" },
@@ -145,7 +145,7 @@ export default function DashboardLayout({ children }: Props) {
                       color: isActive
                         ? "primary.main"
                         : "rgba(255,255,255,0.7)",
-                      minWidth: 38,
+                      minWidth: 32,
                     }}
                   >
                     {item.icon}
@@ -157,7 +157,7 @@ export default function DashboardLayout({ children }: Props) {
                         sx: {
                           fontWeight: isActive ? 600 : 400,
                           color: isActive ? "#fff" : "rgba(255,255,255,0.7)",
-                          fontSize: "0.9rem",
+                          fontSize: "0.85rem",
                         },
                       },
                     }}
@@ -165,11 +165,11 @@ export default function DashboardLayout({ children }: Props) {
                   {hasChildren ? (
                     isExpanded ? (
                       <KeyboardArrowDownIcon
-                        sx={{ color: "rgba(255,255,255,0.5)", fontSize: 18 }}
+                        sx={{ color: "rgba(255,255,255,0.5)", fontSize: 16 }}
                       />
                     ) : (
                       <KeyboardArrowRightIcon
-                        sx={{ color: "rgba(255,255,255,0.5)", fontSize: 18 }}
+                        sx={{ color: "rgba(255,255,255,0.5)", fontSize: 16 }}
                       />
                     )
                   ) : (
@@ -190,7 +190,7 @@ export default function DashboardLayout({ children }: Props) {
               {/* Submenu List */}
               {hasChildren && (
                 <Collapse in={isExpanded} timeout="auto" unmountOnExit>
-                  <Box sx={{ pl: 2, my: 0.5 }}>
+                  <Box sx={{ pl: 1, my: 0.5 }}>
                     {item.children?.map((child) => {
                       const isSubActive = pathname === child.path;
 
@@ -203,8 +203,8 @@ export default function DashboardLayout({ children }: Props) {
                             setMobileOpen(false);
                           }}
                           sx={{
-                            pl: 3.5,
-                            py: 0.85,
+                            pl: 2.5,
+                            py: 0.65,
                             borderRadius: "8px",
                             mb: 0.25,
                             "&.Mui-selected": {
@@ -223,7 +223,7 @@ export default function DashboardLayout({ children }: Props) {
                             slotProps={{
                               primary: {
                                 sx: {
-                                  fontSize: "0.85rem",
+                                  fontSize: "0.78rem",
                                   fontWeight: isSubActive ? 600 : 400,
                                   color: isSubActive
                                     ? "#38bdf8"
@@ -235,8 +235,8 @@ export default function DashboardLayout({ children }: Props) {
                           {isSubActive && (
                             <Box
                               sx={{
-                                width: 6,
-                                height: 6,
+                                width: 5,
+                                height: 5,
                                 borderRadius: "50%",
                                 bgcolor: "#38bdf8",
                               }}
@@ -253,21 +253,21 @@ export default function DashboardLayout({ children }: Props) {
         })}
       </List>
 
-      <Box sx={{ p: 2 }}>
-        <Divider sx={{ borderColor: "rgba(255,255,255,0.1)", mb: 2 }} />
+      <Box sx={{ p: 1.5 }}>
+        <Divider sx={{ borderColor: "rgba(255,255,255,0.1)", mb: 1.5 }} />
         <Box
           sx={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            px: 1,
+            px: 0.5,
           }}
         >
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Avatar
               sx={{
-                width: 32,
-                height: 32,
+                width: 28,
+                height: 28,
                 bgcolor: "primary.main",
                 color: "#1a1a1a",
                 fontWeight: "bold",
@@ -275,13 +275,13 @@ export default function DashboardLayout({ children }: Props) {
                 alignItems: "center",
                 justifyContent: "center",
                 lineHeight: 1,
-                fontSize: "14px",
+                fontSize: "12px",
               }}
             >
               A
             </Avatar>
-            <Typography variant="body2" sx={{ fontWeight: 500 }}>
-              Admin User
+            <Typography variant="body2" sx={{ fontWeight: 500, fontSize: "0.8rem" }}>
+              Admin
             </Typography>
           </Box>
           <IconButton
@@ -369,8 +369,8 @@ export default function DashboardLayout({ children }: Props) {
         component="main"
         sx={{
           flexGrow: 1,
-          p: { xs: 2, md: 5 },
-          pt: { xs: 8, md: 5 },
+          p: { xs: 2, md: 3 },
+          pt: { xs: 8, md: 3 },
           width: { sm: `calc(100% - ${drawerWidth}px)` },
         }}
       >

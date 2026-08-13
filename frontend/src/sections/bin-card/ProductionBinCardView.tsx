@@ -17,7 +17,7 @@ import {
   Avatar,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
-import SearchIcon from "@mui/icons-material/Search";
+import SearchBar from "../../components/search/SearchBar";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import LayersOutlinedIcon from "@mui/icons-material/LayersOutlined";
@@ -26,13 +26,34 @@ import ProductionBinCardDetailView, {
   ProductItem,
 } from "./ProductionBinCardDetailView";
 
+export interface MaterialUsageDto {
+  itemId: string;
+  itemName: string;
+  amount: number;
+}
+
+export interface ProductUsageDto {
+  productName: string;
+  amount: number;
+}
+
+export type ProductionStatusType =
+  | "STORED"
+  | "SOLD"
+  | "CURING"
+  | "DISPATCHED"
+  | "CONSUMED";
+
 export interface ProductionReport {
   id: string;
   reportDate: string;
-  workerName: string;
+  workerName?: string;
   productType: string;
   qtyProduced: number;
   damages: number;
+  status?: ProductionStatusType;
+  materials?: MaterialUsageDto[];
+  productUsages?: ProductUsageDto[];
 }
 
 export default function ProductionBinCardView() {
@@ -67,27 +88,47 @@ export default function ProductionBinCardView() {
     fetchReports();
   }, []);
 
-  // Compute distinct products list strictly from reports (no hardcoded default catalogs)
+  // Compute distinct products list dynamically from production items & consumptions
   const products: ProductItem[] = useMemo(() => {
-    const productMap = new Map<string, { produced: number; damages: number }>();
+    const productMap = new Map<
+      string,
+      { produced: number; damages: number; used: number }
+    >();
 
     reports.forEach((rep) => {
-      if (!rep.productType) return;
-      const existing = productMap.get(rep.productType) || {
-        produced: 0,
-        damages: 0,
-      };
-      productMap.set(rep.productType, {
-        produced: existing.produced + (Number(rep.qtyProduced) || 0),
-        damages: existing.damages + (Number(rep.damages) || 0),
-      });
+      const pName = rep.productType?.trim();
+      if (pName) {
+        const existing = productMap.get(pName) || {
+          produced: 0,
+          damages: 0,
+          used: 0,
+        };
+        existing.produced += Number(rep.qtyProduced) || 0;
+        existing.damages += Number(rep.damages) || 0;
+        productMap.set(pName, existing);
+      }
+
+      // Check if manufactured items were used as components in this report
+      if (rep.productUsages && Array.isArray(rep.productUsages)) {
+        rep.productUsages.forEach((pu) => {
+          const uName = pu.productName?.trim();
+          if (!uName) return;
+          const existing = productMap.get(uName) || {
+            produced: 0,
+            damages: 0,
+            used: 0,
+          };
+          existing.used += Number(pu.amount) || 0;
+          productMap.set(uName, existing);
+        });
+      }
     });
 
     return Array.from(productMap.entries()).map(([name, stats]) => ({
       productId: name.toLowerCase().replace(/[^a-z0-9]/g, "-"),
       productName: name,
       unitOfMeasure: "PCS",
-      currentStock: Math.max(0, stats.produced - stats.damages),
+      currentStock: Math.max(0, stats.produced - stats.damages - stats.used),
     }));
   }, [reports]);
 
@@ -97,47 +138,98 @@ export default function ProductionBinCardView() {
     return products.find((p) => p.productId === selectedProductId) || null;
   }, [products, selectedProductId]);
 
-  // Compute ledger rows
+  // Compute ledger rows accounting for production inflows and consumption outflows
   const ledgerRows: ProductionLedgerRow[] = useMemo(() => {
-    const sorted = [...reports].sort(
-      (a, b) =>
-        new Date(a.reportDate).getTime() - new Date(b.reportDate).getTime(),
+    interface RawMovement {
+      id: string;
+      date: string;
+      productName: string;
+      qtyIn: number;
+      qtyOut: number;
+      damage: number;
+      status: ProductionStatusType;
+      materials?: MaterialUsageDto[];
+      productUsages?: ProductUsageDto[];
+      workerName?: string;
+      remarks: string;
+      type: "PRODUCTION" | "CONSUMPTION";
+    }
+
+    const movements: RawMovement[] = [];
+
+    reports.forEach((rep) => {
+      // 1. Production output movement
+      if (rep.productType) {
+        const inQty = Number(rep.qtyProduced) || 0;
+        const damageQty = Number(rep.damages) || 0;
+        movements.push({
+          id: `prod-${rep.id}`,
+          date: rep.reportDate,
+          productName: rep.productType,
+          qtyIn: inQty,
+          qtyOut: 0,
+          damage: damageQty,
+          status: rep.status || "STORED",
+          materials: rep.materials,
+          productUsages: rep.productUsages,
+          workerName: rep.workerName,
+          remarks:
+            damageQty > 0
+              ? `Produced ${inQty} (${damageQty} damaged)`
+              : `Manufactured ${inQty} usable units`,
+          type: "PRODUCTION",
+        });
+      }
+
+      // 2. Component consumption movements
+      if (rep.productUsages && Array.isArray(rep.productUsages)) {
+        rep.productUsages.forEach((pu, idx) => {
+          const uName = pu.productName?.trim();
+          if (!uName) return;
+          const amt = Number(pu.amount) || 0;
+          if (amt <= 0) return;
+
+          movements.push({
+            id: `cons-${rep.id}-${idx}`,
+            date: rep.reportDate,
+            productName: uName,
+            qtyIn: 0,
+            qtyOut: amt,
+            damage: 0,
+            status: "CONSUMED",
+            workerName: rep.workerName,
+            remarks: `Consumed as input to produce ${rep.productType}`,
+            type: "CONSUMPTION",
+          });
+        });
+      }
+    });
+
+    // Chronological sort
+    movements.sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
     );
 
     const balanceMap = new Map<string, number>();
     const rows: ProductionLedgerRow[] = [];
 
-    sorted.forEach((rep) => {
+    movements.forEach((m) => {
+      const prev = balanceMap.get(m.productName) || 0;
+      const closing = prev + m.qtyIn - m.qtyOut - m.damage;
+      balanceMap.set(m.productName, closing);
+
+      // If activeProduct selected, only include movements for that product
       if (
         activeProduct &&
-        rep.productType.toLowerCase() !==
-          activeProduct.productName.toLowerCase()
+        m.productName.toLowerCase() !== activeProduct.productName.toLowerCase()
       ) {
         return;
       }
 
-      const prev = balanceMap.get(rep.productType) || 0;
-      const inQty = Number(rep.qtyProduced) || 0;
-      const damageQty = Number(rep.damages) || 0;
-      const outQty = 0; // standard out
-      const closing = prev + inQty - outQty - damageQty;
-
-      balanceMap.set(rep.productType, closing);
-
       rows.push({
-        id: rep.id,
-        date: rep.reportDate,
-        productName: rep.productType,
+        ...m,
         openingStock: prev,
-        qtyIn: inQty,
-        qtyOut: outQty,
-        damage: damageQty,
         closingStock: closing,
-        workerName: rep.workerName || "System",
-        remarks:
-          damageQty > 0
-            ? `Produced ${inQty} with ${damageQty} damaged scrap`
-            : "Manufacturing batch completed",
       });
     });
 
@@ -265,70 +357,11 @@ export default function ProductionBinCardView() {
               gap: 1.5,
             }}
           >
-            {/* Search Input */}
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                flex: 1,
-                maxWidth: { xs: "100%", sm: 400 },
-              }}
-            >
-              <TextField
-                fullWidth
-                size="small"
-                placeholder="Search by product"
-                value={gridSearchQuery}
-                onChange={(e) => setGridSearchQuery(e.target.value)}
-                slotProps={{
-                  input: {
-                    startAdornment: (
-                      <InputAdornment position="start" sx={{ mr: 1 }}>
-                        <SearchIcon
-                          sx={{
-                            fontSize: 17,
-                            color: gridSearchQuery ? "#2563EB" : "#64748B",
-                          }}
-                        />
-                      </InputAdornment>
-                    ),
-                  },
-                }}
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    bgcolor: "#FFFFFF",
-                    borderRadius: "12px",
-                    fontSize: "0.825rem",
-                    fontWeight: 500,
-                    height: 38,
-                    pl: 1.25,
-                    pr: 0.75,
-                    display: "flex",
-                    alignItems: "center",
-                    boxShadow: "none",
-                    "& fieldset": {
-                      borderColor: "#E2E8F0",
-                      borderWidth: "1.5px",
-                    },
-                    "&:hover": {
-                      bgcolor: "#FFFFFF",
-                      "& fieldset": {
-                        borderColor: "#93C5FD",
-                        borderWidth: "1.5px",
-                      },
-                    },
-                    "&.Mui-focused": {
-                      bgcolor: "#FFFFFF",
-                      boxShadow: "none",
-                      "& fieldset": {
-                        borderColor: "#2563EB",
-                        borderWidth: "1.5px",
-                      },
-                    },
-                  },
-                }}
-              />
-            </Box>
+            <SearchBar
+              value={gridSearchQuery}
+              onChange={setGridSearchQuery}
+              placeholder="Search by product"
+            />
 
             {/* Quick Metrics Chip */}
             <Box sx={{ display: "flex", alignItems: "center", gap: 1.25 }}>

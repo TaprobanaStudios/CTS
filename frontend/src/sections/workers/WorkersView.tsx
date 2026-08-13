@@ -11,18 +11,17 @@ import {
   DialogTitle,
   TextField,
   Typography,
-  Paper,
   Alert,
   IconButton,
   Snackbar,
   Chip,
 } from "@mui/material";
-import { GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import AddIcon from "@mui/icons-material/Add";
 import { z } from "zod";
-import CustomTable from "@/components/table/CustomTable";
+import CustomTable, { CustomTableColumn } from "@/components/table/CustomTable";
+import SearchBar from "../../components/search/SearchBar";
 
 const nicRegex = /^([0-9]{9}[vVxX]|[0-9]{12})$/;
 const phoneRegex = /^(?:0|(?:\+94))[0-9]{9}$/;
@@ -184,55 +183,116 @@ export default function WorkersView() {
     }
   };
 
-  const columns: GridColDef[] = [
-    { field: "name", headerName: "Name", width: 200 },
-    { field: "nicNumber", headerName: "NIC", width: 130 },
-    { field: "contactNumber", headerName: "Contact", width: 130 },
-    { 
-      field: "startDate", 
-      headerName: "Start Date", 
-      width: 180,
-      renderCell: (params) => {
-        if (!params.value) return "N/A";
-        // Safely format array [2026, 8, 5] or string "2026-08-05" from backend
-        if (Array.isArray(params.value) && params.value.length >= 3) {
-          return `${params.value[0]}-${String(params.value[1]).padStart(2, '0')}-${String(params.value[2]).padStart(2, '0')}`;
-        }
-        return String(params.value);
-      }
+  const columns: CustomTableColumn[] = [
+    {
+      field: "name",
+      headerName: "Name",
+      flex: 1.3,
+      minWidth: 180,
+      renderCell: (params) => (
+        <Typography sx={{ fontSize: "0.875rem", fontWeight: 600, color: "#0F172A" }}>
+          {params.value}
+        </Typography>
+      ),
     },
-    { field: "address", headerName: "Address", flex: 1 },
+    {
+      field: "nicNumber",
+      headerName: "NIC",
+      flex: 0.9,
+      minWidth: 120,
+      align: "center",
+      renderCell: (params) => (
+        <Typography sx={{ fontSize: "0.85rem", color: "#334155", fontWeight: 500 }}>
+          {params.value || "-"}
+        </Typography>
+      ),
+    },
+    {
+      field: "contactNumber",
+      headerName: "Contact",
+      flex: 0.9,
+      minWidth: 120,
+      align: "center",
+      renderCell: (params) => (
+        <Typography sx={{ fontSize: "0.85rem", color: "#334155", fontWeight: 500 }}>
+          {params.value || "-"}
+        </Typography>
+      ),
+    },
+    {
+      field: "startDate",
+      headerName: "Start Date",
+      flex: 0.9,
+      minWidth: 120,
+      align: "center",
+      renderCell: (params) => {
+        if (!params.value) return <Typography sx={{ color: "#94A3B8" }}>-</Typography>;
+        if (Array.isArray(params.value) && params.value.length >= 3) {
+          return (
+            <Typography sx={{ fontSize: "0.85rem", color: "#64748B", fontWeight: 500 }}>
+              {`${params.value[0]}-${String(params.value[1]).padStart(2, "0")}-${String(params.value[2]).padStart(2, "0")}`}
+            </Typography>
+          );
+        }
+        return (
+          <Typography sx={{ fontSize: "0.85rem", color: "#64748B", fontWeight: 500 }}>
+            {String(params.value)}
+          </Typography>
+        );
+      },
+    },
+    {
+      field: "address",
+      headerName: "Address",
+      flex: 1.5,
+      minWidth: 180,
+      renderCell: (params) => (
+        <Typography sx={{ fontSize: "0.85rem", color: "#475569", fontWeight: 500 }}>
+          {params.value || "-"}
+        </Typography>
+      ),
+    },
     {
       field: "status",
       headerName: "Status",
-      flex: 1,
-      renderCell: (params) => (
-        <Chip
-          label={params.value}
-          size="medium"
-          sx={{
-            bgcolor:
-              params.value === "ACTIVE"
-                ? "rgba(205, 219, 50, 0.2)"
-                : "rgba(0,0,0,0.05)",
-            color: params.value === "ACTIVE" ? "#5a6311" : "text.secondary",
-            fontWeight: "bold",
-            fontSize: "0.7rem",
-            height: 24,
-          }}
-        />
-      ),
+      flex: 0.8,
+      minWidth: 110,
+      align: "center",
+      renderCell: (params) => {
+        const isActive = params.value === "ACTIVE";
+        return (
+          <Chip
+            label={params.value}
+            size="small"
+            sx={{
+              bgcolor: isActive ? "#ECFDF5" : "#FEF2F2",
+              color: isActive ? "#059669" : "#DC2626",
+              border: isActive
+                ? "1px solid rgba(16, 185, 129, 0.2)"
+                : "1px solid rgba(239, 68, 68, 0.2)",
+              fontWeight: 700,
+              fontSize: "0.75rem",
+              height: 24,
+              boxShadow: "none",
+            }}
+          />
+        );
+      },
     },
     {
       field: "actions",
       headerName: "Actions",
       sortable: false,
-      width: 120,
-      renderCell: (params: GridRenderCellParams) => (
-        <Box>
+      width: 110,
+      align: "center",
+      renderCell: (params: any) => (
+        <Box sx={{ display: "flex", justifyContent: "center", gap: 0.5 }}>
           <IconButton
             size="small"
-            sx={{ color: "text.secondary", mr: 1 }}
+            sx={{
+              color: "#64748B",
+              "&:hover": { color: "#2563EB", bgcolor: "rgba(37, 99, 235, 0.08)" },
+            }}
             onClick={() => {
               if (params.row.status === "DEACTIVATED") {
                 setWorkerToActivate(params.row);
@@ -247,7 +307,10 @@ export default function WorkersView() {
           </IconButton>
           <IconButton
             size="small"
-            color="error"
+            sx={{
+              color: "#EF4444",
+              "&:hover": { color: "#DC2626", bgcolor: "rgba(239, 68, 68, 0.08)" },
+            }}
             onClick={() => {
               setWorkerToDelete(params.row);
               setDeleteConfirmationText("");
@@ -262,73 +325,99 @@ export default function WorkersView() {
   ];
 
   return (
-    <Box sx={{ width: "100%", height: "calc(100vh - 120px)", display: "flex", flexDirection: "column" }}>
+    <Box
+      sx={{
+        width: "100%",
+        height: "calc(100vh - 120px)",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      {/* Top Header */}
       <Box
         sx={{
+          mb: 3,
           display: "flex",
           justifyContent: "space-between",
-          mb: 4,
           alignItems: "center",
         }}
       >
-        <Typography variant="h4" sx={{ fontWeight: "bold" }}>
+        <Typography
+          sx={{
+            fontWeight: 800,
+            color: "#0F172A",
+            letterSpacing: "-0.02em",
+          }}
+          variant="h4"
+        >
           Workers Directory
         </Typography>
-        <Box sx={{ display: "flex", gap: 2 }}>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => handleOpen()}
-            sx={{ fontWeight: "bold" }}
-          >
-            Add Worker
-          </Button>
-        </Box>
+
+        <Button
+          variant="contained"
+          color="primary"
+          startIcon={<AddIcon />}
+          onClick={() => handleOpen()}
+          sx={{
+            borderRadius: "10px",
+            bgcolor: "#2563EB",
+            fontWeight: 700,
+            textTransform: "none",
+            px: 2.25,
+            py: 1,
+            boxShadow: "none",
+            "&:hover": {
+              bgcolor: "#1D4ED8",
+              boxShadow: "none",
+            },
+          }}
+        >
+          Add Worker
+        </Button>
       </Box>
 
+      {/* Global Alerts */}
       <Snackbar
         open={!!error}
         autoHideDuration={6000}
         onClose={() => setError("")}
         anchorOrigin={{ vertical: "top", horizontal: "right" }}
       >
-        <Alert
-          onClose={() => setError("")}
-          severity="error"
-          variant="filled"
-          sx={{ width: "100%" }}
-        >
+        <Alert severity="error" variant="filled" onClose={() => setError("")}>
           {error}
         </Alert>
       </Snackbar>
 
-      <Box sx={{ display: "flex", mb: 3 }}>
-        <TextField
+      {/* Search Bar */}
+      <Box sx={{ mb: 3 }}>
+        <SearchBar
           placeholder="Search by name..."
-          variant="outlined"
-          size="small"
           value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          sx={{ width: 300 }}
+          onChange={setSearchQuery}
+          maxWidth={{ xs: "100%", sm: 400 }}
         />
       </Box>
 
-      <Box sx={{ flexGrow: 1, width: "100%", mt: 2, minHeight: 0 }}>
+      {/* Table Container */}
+      <Box sx={{ flexGrow: 1, minHeight: 0 }}>
         <CustomTable
-          rows={workers.filter((worker) => worker.name.toLowerCase().includes(searchQuery.toLowerCase()))}
+          rows={workers.filter((worker) =>
+            worker.name.toLowerCase().includes(searchQuery.toLowerCase())
+          )}
           columns={columns}
           loading={loading}
         />
       </Box>
 
+      {/* Add / Edit Worker Dialog */}
       <Dialog
         open={open}
         onClose={handleClose}
         maxWidth="sm"
         fullWidth
-        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+        slotProps={{ paper: { sx: { borderRadius: "16px" } } }}
       >
-        <DialogTitle sx={{ fontWeight: "bold" }}>
+        <DialogTitle sx={{ fontWeight: 800, color: "#0F172A" }}>
           {isEditing ? "Edit Worker" : "Add New Worker"}
         </DialogTitle>
         <DialogContent
@@ -396,26 +485,40 @@ export default function WorkersView() {
             helperText={validationErrors.address}
             sx={{ mb: 2 }}
           />
-          {/* Status field removed as requested */}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={handleClose} sx={{ color: "text.secondary" }}>
+          <Button
+            onClick={handleClose}
+            sx={{ color: "text.secondary", fontWeight: 600, textTransform: "none" }}
+          >
             Cancel
           </Button>
-          <Button onClick={handleSave} variant="contained" disableElevation>
+          <Button
+            onClick={handleSave}
+            variant="contained"
+            sx={{
+              fontWeight: 700,
+              textTransform: "none",
+              bgcolor: "#2563EB",
+              borderRadius: "8px",
+              boxShadow: "none",
+              "&:hover": { bgcolor: "#1D4ED8", boxShadow: "none" },
+            }}
+          >
             Save
           </Button>
         </DialogActions>
       </Dialog>
 
-      <Dialog 
-        open={deleteDialogOpen} 
+      {/* Deactivate Worker Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
         onClose={() => setDeleteDialogOpen(false)}
         maxWidth="xs"
         fullWidth
         slotProps={{ paper: { sx: { borderRadius: "16px", p: 1 } } }}
       >
-        <DialogTitle sx={{ fontWeight: "bold", color: "error.main" }}>
+        <DialogTitle sx={{ fontWeight: 800, color: "error.main" }}>
           Deactivate Worker?
         </DialogTitle>
         <DialogContent>
@@ -435,7 +538,11 @@ export default function WorkersView() {
           />
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setDeleteDialogOpen(false)} color="inherit" sx={{ fontWeight: "bold" }}>
+          <Button
+            onClick={() => setDeleteDialogOpen(false)}
+            color="inherit"
+            sx={{ fontWeight: 600, textTransform: "none" }}
+          >
             Cancel
           </Button>
           <Button
@@ -443,21 +550,22 @@ export default function WorkersView() {
             color="error"
             variant="contained"
             disabled={deleteConfirmationText !== "DELETE"}
-            sx={{ fontWeight: "bold", borderRadius: "8px" }}
+            sx={{ fontWeight: 700, textTransform: "none", borderRadius: "8px" }}
           >
             Deactivate
           </Button>
         </DialogActions>
       </Dialog>
 
-      <Dialog 
-        open={activateDialogOpen} 
+      {/* Activate Worker Dialog */}
+      <Dialog
+        open={activateDialogOpen}
         onClose={() => setActivateDialogOpen(false)}
         maxWidth="xs"
         fullWidth
         slotProps={{ paper: { sx: { borderRadius: "16px", p: 1 } } }}
       >
-        <DialogTitle sx={{ fontWeight: "bold", color: "success.main" }}>
+        <DialogTitle sx={{ fontWeight: 800, color: "success.main" }}>
           Activate Worker?
         </DialogTitle>
         <DialogContent>
@@ -477,7 +585,11 @@ export default function WorkersView() {
           />
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setActivateDialogOpen(false)} color="inherit" sx={{ fontWeight: "bold" }}>
+          <Button
+            onClick={() => setActivateDialogOpen(false)}
+            color="inherit"
+            sx={{ fontWeight: 600, textTransform: "none" }}
+          >
             Cancel
           </Button>
           <Button
@@ -485,7 +597,7 @@ export default function WorkersView() {
             color="success"
             variant="contained"
             disabled={activateConfirmationText !== "YES"}
-            sx={{ fontWeight: "bold", borderRadius: "8px" }}
+            sx={{ fontWeight: 700, textTransform: "none", borderRadius: "8px" }}
           >
             Activate
           </Button>

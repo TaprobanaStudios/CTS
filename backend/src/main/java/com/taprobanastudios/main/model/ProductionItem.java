@@ -9,6 +9,8 @@ import com.taprobanastudios.main.audit.Auditable;
 import lombok.EqualsAndHashCode;
 
 
+import com.taprobanastudios.main.model.enums.ProductionStatus;
+
 @Entity
 @Table(name = "production_items")
 @Getter
@@ -29,8 +31,15 @@ public class ProductionItem extends Auditable<String> {
     @Column(name = "qty_produced")
     private Integer qtyProduced;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status")
+    private ProductionStatus status = ProductionStatus.STORED;
+
     @OneToMany(mappedBy = "productionItem", cascade = CascadeType.ALL, orphanRemoval = true)
     private java.util.List<ProductionMaterialUsage> materialUsages = new java.util.ArrayList<>();
+
+    @OneToMany(mappedBy = "productionItem", cascade = CascadeType.ALL, orphanRemoval = true)
+    private java.util.List<ProductionProductUsage> productUsages = new java.util.ArrayList<>();
 
     @Column(name = "damages")
     private Integer damages;

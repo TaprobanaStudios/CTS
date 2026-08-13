@@ -41,6 +41,7 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import RemoveIcon from "@mui/icons-material/Remove";
 import SearchIcon from "@mui/icons-material/Search";
+import SearchBar from "../../components/search/SearchBar";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
@@ -57,6 +58,7 @@ import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import LayersOutlinedIcon from "@mui/icons-material/LayersOutlined";
 import ViewModuleIcon from "@mui/icons-material/ViewModule";
 import CloseIcon from "@mui/icons-material/Close";
+import { useSearchParams } from "next/navigation";
 import { z } from "zod";
 import MaterialBinCard from "./MaterialBinCard";
 import MasterBinCard from "./MasterBinCard";
@@ -89,10 +91,13 @@ export interface InventoryLog {
 }
 
 export default function BinCardView() {
+  const searchParams = useSearchParams();
+  const queryMaterialId = searchParams?.get("materialId") || searchParams?.get("itemId");
+
   // Master items & logs
   const [items, setItems] = useState<Item[]>([]);
   // selectedItemId === null => Overview Grid View; string => Detail View
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(queryMaterialId || null);
   const [logs, setLogs] = useState<InventoryLog[]>([]);
 
   // UI state
@@ -131,6 +136,13 @@ export default function BinCardView() {
     fetchItems();
   }, []);
 
+  useEffect(() => {
+    if (queryMaterialId) {
+      setSelectedItemId(queryMaterialId);
+      fetchLogs(queryMaterialId);
+    }
+  }, [queryMaterialId]);
+
   // Fetch logs when entering detail view or switching items
   const fetchLogs = async (itemId: string | null) => {
     if (itemId === null) {
@@ -157,12 +169,18 @@ export default function BinCardView() {
   const handleSelectCard = (itemId: string) => {
     setSelectedItemId(itemId);
     fetchLogs(itemId);
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", `/dashboard/bin-cards/material?materialId=${itemId}`);
+    }
   };
 
   const handleBackToGrid = () => {
     setSelectedItemId(null);
     setLogs([]);
     fetchItems(); // refresh latest stock counts
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", "/dashboard/bin-cards/material");
+    }
   };
 
   // Selected item object
@@ -368,117 +386,11 @@ export default function BinCardView() {
             }}
           >
             {/* Search Input Field */}
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                flex: 1,
-                maxWidth: { xs: "100%", sm: 400 },
-              }}
-            >
-              <TextField
-                fullWidth
-                size="small"
-                placeholder="Search by material"
-                value={gridSearchQuery}
-                onChange={(e) => setGridSearchQuery(e.target.value)}
-                slotProps={{
-                  input: {
-                    startAdornment: (
-                      <InputAdornment
-                        position="start"
-                        sx={{
-                          display: "flex",
-                          alignItems: "center",
-                          mr: 1,
-                          height: "100%",
-                          maxHeight: "none",
-                        }}
-                      >
-                        <SearchIcon
-                          sx={{
-                            fontSize: 17,
-                            color: gridSearchQuery ? "#2563EB" : "#64748B",
-                            display: "block",
-                            transition: "color 0.2s ease",
-                          }}
-                        />
-                      </InputAdornment>
-                    ),
-                    endAdornment: gridSearchQuery ? (
-                      <InputAdornment position="end" sx={{ mr: 0 }}>
-                        <Tooltip title="Clear search">
-                          <IconButton
-                            size="small"
-                            onClick={() => setGridSearchQuery("")}
-                            sx={{
-                              p: 0.4,
-                              bgcolor: "#F1F5F9",
-                              color: "#64748B",
-                              "&:hover": {
-                                bgcolor: "#E2E8F0",
-                                color: "#0F172A",
-                              },
-                              transition: "all 0.15s ease",
-                            }}
-                          >
-                            <CloseIcon sx={{ fontSize: 14 }} />
-                          </IconButton>
-                        </Tooltip>
-                      </InputAdornment>
-                    ) : null,
-                  },
-                }}
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    bgcolor: "#FFFFFF",
-                    borderRadius: "12px",
-                    fontSize: "0.825rem",
-                    fontWeight: 500,
-                    height: 38,
-                    pl: 1.25,
-                    pr: 0.75,
-                    display: "flex",
-                    alignItems: "center",
-                    boxShadow: "0 2px 8px rgba(15, 23, 42, 0.03)",
-                    transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-                    "& fieldset": {
-                      borderColor: "#E2E8F0",
-                      borderWidth: "1.5px",
-                      transition: "border-color 0.2s ease",
-                    },
-                    "&:hover": {
-                      bgcolor: "#FFFFFF",
-                      "& fieldset": {
-                        borderColor: "#93C5FD",
-                        borderWidth: "1.5px",
-                      },
-                    },
-                    "&.Mui-focused": {
-                      bgcolor: "#FFFFFF",
-                      boxShadow: "none",
-                      "& fieldset": {
-                        borderColor: "#2563EB",
-                        borderWidth: "1.5px",
-                      },
-                    },
-                  },
-                  "& .MuiOutlinedInput-input": {
-                    p: 0,
-                    height: "100%",
-                    fontSize: "0.825rem",
-                    lineHeight: "1.2",
-                    display: "flex",
-                    alignItems: "center",
-                    "&::placeholder": {
-                      color: "#94A3B8",
-                      opacity: 1,
-                      fontWeight: 400,
-                    },
-                  },
-                }}
-              />
-            </Box>
+            <SearchBar
+              value={gridSearchQuery}
+              onChange={setGridSearchQuery}
+              placeholder="Search by material"
+            />
 
             {/* Quick Metrics / Result Counter */}
             <Box

@@ -27,7 +27,7 @@ import {
 
 import AddIcon from "@mui/icons-material/Add";
 import RemoveIcon from "@mui/icons-material/Remove";
-import SearchIcon from "@mui/icons-material/Search";
+import SearchBar from "../../components/search/SearchBar";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import TrendingDownIcon from "@mui/icons-material/TrendingDown";
@@ -61,7 +61,7 @@ export default function BinCardDetailView({
   onTransaction,
 }: BinCardDetailViewProps) {
   // Detail view search & filters
-  const isAllMaterials = selectedItemId === "all" || !activeItem;
+  const isAllMaterials = selectedItemId === "all";
   const [detailSearchQuery, setDetailSearchQuery] = useState("");
   const [movementTab, setMovementTab] = useState<"all" | "in" | "out">("all");
 
@@ -70,6 +70,17 @@ export default function BinCardDetailView({
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [orderBy, setOrderBy] = useState<string>("transactionDate");
+
+  // Item fallback helpers
+  const currentItemName =
+    activeItem?.itemName ||
+    (logs.length > 0 && logs[0]?.item?.name ? logs[0].item.name : isAllMaterials ? "All Materials Combined Ledger" : "Material Ledger");
+  const currentItemSku =
+    activeItem?.itemId ||
+    (logs.length > 0 && logs[0]?.item?.id ? logs[0].item.id : selectedItemId);
+  const currentItemUnit =
+    activeItem?.unitOfMeasure ||
+    (logs.length > 0 && logs[0]?.item?.unitOfMeasure ? logs[0].item.unitOfMeasure : "UNITS");
 
   // KPI Metrics calculation for Detail View
   const metrics = useMemo(() => {
@@ -93,9 +104,9 @@ export default function BinCardDetailView({
       totalIn,
       totalOut,
       totalRecords,
-      unit: activeItem?.unitOfMeasure || "UNITS",
+      unit: currentItemUnit,
     };
-  }, [logs, activeItem]);
+  }, [logs, activeItem, currentItemUnit]);
 
   // Filtered & sorted logs for Detail Table
   const filteredLogs = useMemo(() => {
@@ -297,7 +308,7 @@ export default function BinCardDetailView({
           bgcolor: "#FFFFFF",
           border: "1px solid #E2E8F0",
           borderRadius: "16px",
-          boxShadow: "0 4px 20px -2px rgba(15, 23, 42, 0.04)",
+          boxShadow: "none",
           display: "flex",
           flexDirection: { xs: "column", md: "row" },
           justifyContent: "space-between",
@@ -310,13 +321,11 @@ export default function BinCardDetailView({
           <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
             <Typography
               variant="h4"
-              sx={{ color: "#0F172A", m: 0, lineHeight: 1 }}
+              sx={{ color: "#0F172A", m: 0, lineHeight: 1, fontWeight: 800 }}
             >
-              {activeItem
-                ? activeItem.itemName
-                : "All Materials Combined Ledger"}
+              {currentItemName}
             </Typography>
-            {activeItem && (
+            {!isAllMaterials && (
               <Chip
                 icon={
                   metrics.currentStock > 0 ? (
@@ -332,11 +341,11 @@ export default function BinCardDetailView({
                   bgcolor: metrics.currentStock > 0 ? "#ECFDF5" : "#FEF2F2",
                   color: metrics.currentStock > 0 ? "#065F46" : "#991B1B",
                   fontWeight: 700,
-                  mt: 1,
                   fontSize: "0.65rem",
                   height: 24,
                   border: "1px solid",
                   borderColor: metrics.currentStock > 0 ? "#A7F3D0" : "#FECACA",
+                  boxShadow: "none",
                 }}
               />
             )}
@@ -345,14 +354,14 @@ export default function BinCardDetailView({
             variant="body2"
             sx={{ color: "#64748B", fontSize: "0.85rem" }}
           >
-            {activeItem
-              ? `SKU ID: ${activeItem.itemId}`
+            {!isAllMaterials
+              ? `Material ID: ${currentItemSku}`
               : "Aggregated transaction log for all warehouse materials"}
           </Typography>
         </Box>
 
         {/* Right Side: Current Balance inline (hidden for combined ledger) */}
-        {activeItem && (
+        {!isAllMaterials && (
           <Box
             sx={{
               display: "flex",
@@ -363,6 +372,7 @@ export default function BinCardDetailView({
               borderRadius: "12px",
               border: "1px solid #E2E8F0",
               minWidth: 160,
+              boxShadow: "none",
             }}
           >
             <Box sx={{ display: "flex", flexDirection: "column" }}>
@@ -407,7 +417,7 @@ export default function BinCardDetailView({
           border: "1px solid #E2E8F0",
           borderRadius: "16px",
           overflow: "hidden",
-          boxShadow: "0 4px 20px -2px rgba(15, 23, 42, 0.04)",
+          boxShadow: "none",
         }}
       >
         {/* Table Toolbar & Filters */}
@@ -464,84 +474,11 @@ export default function BinCardDetailView({
           </Tabs>
 
           {/* Search Log Records */}
-          <TextField
-            size="small"
-            placeholder="Search"
+          <SearchBar
             value={detailSearchQuery}
-            onChange={(e) => setDetailSearchQuery(e.target.value)}
-            slotProps={{
-              input: {
-                startAdornment: (
-                  <InputAdornment
-                    position="start"
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      mr: 1,
-                      height: "100%",
-                      maxHeight: "none",
-                    }}
-                  >
-                    <SearchIcon
-                      sx={{
-                        fontSize: 18,
-                        color: detailSearchQuery ? "#2563EB" : "#64748B",
-                        display: "block",
-                        transition: "color 0.2s ease",
-                      }}
-                    />
-                  </InputAdornment>
-                ),
-                endAdornment: detailSearchQuery ? (
-                  <InputAdornment position="end" sx={{ mr: 0 }}>
-                    <IconButton
-                      size="small"
-                      onClick={() => setDetailSearchQuery("")}
-                      sx={{
-                        p: 0.4,
-                        bgcolor: "#F1F5F9",
-                        color: "#64748B",
-                        "&:hover": { bgcolor: "#E2E8F0", color: "#0F172A" },
-                        transition: "all 0.15s ease",
-                      }}
-                    >
-                      <CloseIcon sx={{ fontSize: 14 }} />
-                    </IconButton>
-                  </InputAdornment>
-                ) : null,
-              },
-            }}
-            sx={{
-              width: { xs: "100%", sm: 320 },
-              "& .MuiOutlinedInput-root": {
-                bgcolor: "#FFFFFF",
-                borderRadius: "12px",
-                fontSize: "0.85rem",
-                height: 40,
-                pl: 1.25,
-                pr: 1,
-                display: "flex",
-                alignItems: "center",
-                "& fieldset": { borderColor: "#E2E8F0" },
-                "&:hover fieldset": { borderColor: "#93C5FD" },
-                "&.Mui-focused fieldset": {
-                  borderColor: "#2563EB",
-                  borderWidth: "1px",
-                },
-              },
-              "& .MuiOutlinedInput-input": {
-                p: 0,
-                height: "100%",
-                fontSize: "0.85rem",
-                lineHeight: "1.2",
-                display: "flex",
-                alignItems: "center",
-                "&::placeholder": {
-                  color: "#94A3B8",
-                  opacity: 1,
-                },
-              },
-            }}
+            onChange={setDetailSearchQuery}
+            placeholder="Search"
+            maxWidth={{ xs: "100%", sm: 320 }}
           />
         </Box>
 

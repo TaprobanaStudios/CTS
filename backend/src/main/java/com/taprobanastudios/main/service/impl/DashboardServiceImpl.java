@@ -76,6 +76,8 @@ public class DashboardServiceImpl implements DashboardService {
                 return date.getMonth().getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH);
             } else if ("month".equalsIgnoreCase(period)) {
                 return "Week " + (date.get(java.time.temporal.IsoFields.WEEK_OF_WEEK_BASED_YEAR) - date.withDayOfMonth(1).get(java.time.temporal.IsoFields.WEEK_OF_WEEK_BASED_YEAR) + 1);
+            } else if ("week".equalsIgnoreCase(period)) {
+                return date.getDayOfWeek().getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH);
             }
             return date.toString();
         };
