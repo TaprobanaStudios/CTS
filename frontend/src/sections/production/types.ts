@@ -107,7 +107,8 @@ export interface ProductSale {
   productName: string;
   quantity: number;
   // Selling price per piece
-  unitPrice: number;
+  // Missing for clerks, who do not see prices
+  unitPrice: number | null;
   unitMaterialCost: number | null;
   editedBy?: string | null;
   editedAt?: string | null;

@@ -37,7 +37,10 @@ public class ProductionController extends AbstractController {
     @PutMapping("/items/{itemId}")
     public ResponseEntity<ProductionItemResponseDto> updateProductionItem(
             @PathVariable java.util.UUID itemId,
-            @RequestBody ProductionItemUpdateDto updateDto) {
+            @RequestBody ProductionItemUpdateDto updateDto,
+            org.springframework.security.core.Authentication authentication) {
+        // Recorded as whoever is signed in, whatever the request says
+        updateDto.setEditedBy(authentication.getName());
         return sendSuccessResponse(productionService.updateProductionItem(itemId, updateDto));
     }
 

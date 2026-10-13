@@ -15,6 +15,7 @@ import {
   Avatar,
   Divider,
   IconButton,
+  ButtonBase,
 } from "@mui/material";
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import PeopleIcon from "@mui/icons-material/People";
@@ -25,20 +26,27 @@ import MenuIcon from "@mui/icons-material/Menu";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
+import ManageAccountsOutlinedIcon from "@mui/icons-material/ManageAccountsOutlined";
+import BackLink from "@/components/nav/BackLink";
+import { AuthProvider, useAuth } from "@/auth/AuthContext";
 
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
 import Collapse from "@mui/material/Collapse";
 
-const drawerWidth = 200;
+const adminDrawerWidth = 200;
+// A clerk's sidebar holds only the logo and Log out, so it is a narrow strip
+const clerkDrawerWidth = 84;
 
 interface Props {
   children: React.ReactNode;
 }
 
-export default function DashboardLayout({ children }: Props) {
+// The sidebar and page frame, shared by both roles; a clerk's sidebar has only the name and Log out
+function SidebarShell({ children }: Props) {
   const router = useRouter();
   const pathname = usePathname();
+  const { user, logout, isAdmin } = useAuth();
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const [openSubmenus, setOpenSubmenus] = React.useState<
     Record<string, boolean>
@@ -50,11 +58,6 @@ export default function DashboardLayout({ children }: Props) {
     setMobileOpen(!mobileOpen);
   };
 
-  const handleLogout = () => {
-    document.cookie = "auth=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-    router.push("/login");
-  };
-
   const toggleSubmenu = (text: string) => {
     setOpenSubmenus((prev) => ({
       ...prev,
@@ -62,9 +65,9 @@ export default function DashboardLayout({ children }: Props) {
     }));
   };
 
-  const navItems = [
+  const allNavItems = [
     { text: "Overview", icon: <DashboardIcon sx={{ fontSize: 20 }} />, path: "/dashboard" },
-    { text: "Workers", icon: <PeopleIcon sx={{ fontSize: 20 }} />, path: "/dashboard/workers" },
+    { text: "Staff", icon: <PeopleIcon sx={{ fontSize: 20 }} />, path: "/dashboard/workers" },
     {
       text: "Inventory",
       icon: <InventoryIcon sx={{ fontSize: 20 }} />,
@@ -97,7 +100,15 @@ export default function DashboardLayout({ children }: Props) {
       icon: <HistoryOutlinedIcon sx={{ fontSize: 20 }} />,
       path: "/dashboard/history",
     },
+    {
+      text: "Login Accounts",
+      icon: <ManageAccountsOutlinedIcon sx={{ fontSize: 20 }} />,
+      path: "/dashboard/users",
+    },
   ];
+  // Clerks move around from their home page and the breadcrumb, not from a menu
+  const navItems = isAdmin ? allNavItems : [];
+  const drawerWidth = isAdmin ? adminDrawerWidth : clerkDrawerWidth;
 
   const drawer = (
     <Box
@@ -109,7 +120,9 @@ export default function DashboardLayout({ children }: Props) {
         color: "#fff",
       }}
     >
-      <Box sx={{ p: 2, px: 2.5, display: "flex", alignItems: "center", gap: 1 }}>
+      <Box
+        sx={{ p: 2, px: isAdmin ? 2.5 : 1, display: "flex", alignItems: "center", justifyContent: isAdmin ? "flex-start" : "center", gap: 1 }}
+      >
         <Typography
           variant="h6"
           sx={{ fontWeight: "bold", letterSpacing: 1, color: "white" }}
@@ -275,34 +288,59 @@ export default function DashboardLayout({ children }: Props) {
             px: 0.5,
           }}
         >
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Avatar
+          {isAdmin ? (
+            <>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}>
+                <Avatar
+                  sx={{
+                    flexShrink: 0,
+                    width: 28,
+                    height: 28,
+                    bgcolor: "primary.main",
+                    color: "#1a1a1a",
+                    fontWeight: "bold",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    lineHeight: 1,
+                    fontSize: "12px",
+                  }}
+                >
+                  {user.fullName.charAt(0).toUpperCase()}
+                </Avatar>
+                <Typography variant="body2" noWrap sx={{ fontWeight: 500, fontSize: "0.8rem" }}>
+                  {user.fullName}
+                </Typography>
+              </Box>
+              <IconButton
+                size="small"
+                aria-label="Log out"
+                onClick={logout}
+                sx={{ color: "rgba(255,255,255,0.7)" }}
+              >
+                <LogoutIcon fontSize="small" />
+              </IconButton>
+            </>
+          ) : (
+            <ButtonBase
+              onClick={logout}
               sx={{
-                width: 28,
-                height: 28,
-                bgcolor: "primary.main",
-                color: "#1a1a1a",
-                fontWeight: "bold",
+                width: "100%",
+                py: 1,
                 display: "flex",
+                flexDirection: "column",
                 alignItems: "center",
-                justifyContent: "center",
-                lineHeight: 1,
-                fontSize: "12px",
+                gap: 0.5,
+                borderRadius: "8px",
+                color: "rgba(255,255,255,0.8)",
+                "&:hover": { bgcolor: "rgba(255, 255, 255, 0.08)", color: "#fff" },
+                "&:focus-visible": { outline: "2px solid #60A5FA", outlineOffset: 2 },
               }}
             >
-              A
-            </Avatar>
-            <Typography variant="body2" sx={{ fontWeight: 500, fontSize: "0.8rem" }}>
-              Admin
-            </Typography>
-          </Box>
-          <IconButton
-            size="small"
-            onClick={handleLogout}
-            sx={{ color: "rgba(255,255,255,0.7)" }}
-          >
-            <LogoutIcon fontSize="small" />
-          </IconButton>
+              <LogoutIcon fontSize="small" />
+              <Typography sx={{ fontSize: "0.72rem", fontWeight: 600 }}>Log out</Typography>
+            </ButtonBase>
+          )}
         </Box>
       </Box>
     </Box>
@@ -389,5 +427,61 @@ export default function DashboardLayout({ children }: Props) {
         {children}
       </Box>
     </Box>
+  );
+}
+
+// The only pages a clerk works with; anything else sends them back to their home page
+const CLERK_PAGES = [
+  { path: "/dashboard/production", name: "Record Production" },
+  { path: "/dashboard/inventory", name: "Inventory" },
+  { path: "/dashboard/bin-cards/material", name: "Material Bin Card" },
+  { path: "/dashboard/bin-cards/production", name: "Production Bin Card" },
+];
+// The breadcrumb line above each clerk page, with the gap under it
+const clerkBackRowHeight = 40;
+
+// What a clerk's page area adds: only their own pages open, with a breadcrumb back to Home
+function ClerkContent({ children }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const isHome = pathname === "/dashboard";
+  const currentPage = CLERK_PAGES.find((page) => pathname === page.path || pathname.startsWith(`${page.path}/`));
+  const allowed = isHome || currentPage !== undefined;
+
+  React.useEffect(() => {
+    if (!allowed) router.replace("/dashboard");
+  }, [allowed, router]);
+
+  return (
+    <Box
+      sx={{
+        // The breadcrumb line and the padding above and below the page
+        "--page-chrome": `${48 + (isHome ? 0 : clerkBackRowHeight)}px`,
+        // A ledger shows its own, longer breadcrumb: show only that one
+        "&:has([data-own-back])": {
+          "--page-chrome": "48px",
+          '& > nav[aria-label="Breadcrumb"]': { display: "none" },
+        },
+      }}
+    >
+      {currentPage && (
+        <BackLink trail={[{ label: "Home", href: "/dashboard" }]} current={currentPage.name} height={clerkBackRowHeight} />
+      )}
+      {allowed ? children : null}
+    </Box>
+  );
+}
+
+function Shell({ children }: Props) {
+  const { isAdmin } = useAuth();
+  return <SidebarShell>{isAdmin ? children : <ClerkContent>{children}</ClerkContent>}</SidebarShell>;
+}
+
+export default function DashboardLayout({ children }: Props) {
+  return (
+    <AuthProvider>
+      <Shell>{children}</Shell>
+    </AuthProvider>
   );
 }

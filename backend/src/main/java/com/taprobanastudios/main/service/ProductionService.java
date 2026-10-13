@@ -15,4 +15,7 @@ public interface ProductionService {
     // Corrects the date, quantity or damages of one production entry and records who did it
     ProductionItemResponseDto updateProductionItem(java.util.UUID itemId, ProductionItemUpdateDto updateDto);
     Page<ProductionItemResponseDto> getProductionItems(ProductionFilterDto filter, Pageable pageable);
+
+    // The entries behind one page of a ledger
+    List<ProductionItemResponseDto> getProductionItemsByIds(java.util.Collection<java.util.UUID> itemIds);
 }

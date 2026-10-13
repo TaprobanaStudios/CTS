@@ -22,16 +22,12 @@ import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import LayersOutlinedIcon from "@mui/icons-material/LayersOutlined";
 import ProductionBinCardDetailView, {
-  ProductionLedgerRow,
   ProductItem,
+  ProductSummaryDto,
+  toProductItem,
 } from "./ProductionBinCardDetailView";
-import {
-  MaterialUsageDto,
-  ProductSale,
-  ProductUsageDto,
-  formatMoney,
-  formatQty,
-} from "../production/types";
+import { MaterialUsageDto, ProductUsageDto, formatQty } from "../production/types";
+import useDebouncedValue from "@/hooks/useDebouncedValue";
 import { currentMonthInSriLanka } from "@/utils/datetime";
 
 export type ProductionStatusType =
@@ -57,296 +53,76 @@ export interface ProductionReport {
   editNote?: string | null;
 }
 
-export default function ProductionBinCardView() {
-  const [reports, setReports] = useState<ProductionReport[]>([]);
-  const [sales, setSales] = useState<ProductSale[]>([]);
-  const [loading, setLoading] = useState(true);
+// Cards per page; the "All Products" card takes one of the eight places when nothing is searched
+const CARDS_PER_PAGE = 8;
+const SEARCH_DEBOUNCE_MS = 350;
 
-  // Navigation state: null => Grid Overview; string => Detail View
-  const [selectedProductId, setSelectedProductId] = useState<string | null>(
-    null,
-  );
+interface ProductPage {
+  // The request this page of cards answers
+  key: string;
+  products: ProductItem[];
+  total: number;
+}
+
+export default function ProductionBinCardView() {
+  // null => cards overview; otherwise the ledger of one product (or of all, when productName is null)
+  const [selected, setSelected] = useState<{ productName: string | null } | null>(null);
 
   // Grid view search & pagination
   const [gridSearchQuery, setGridSearchQuery] = useState("");
   const [gridPage, setGridPage] = useState(1);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [grid, setGrid] = useState<ProductPage>({ key: "", products: [], total: 0 });
 
-  // Fetch production items and the sales that took products back out of stock
-  const fetchReports = async () => {
-    setLoading(true);
-    try {
-      const [res, salesRes] = await Promise.all([
-        fetch("/api/production/items"),
-        fetch("/api/sales"),
-      ]);
-      if (!res.ok || !salesRes.ok) throw new Error("Failed to fetch production items");
-      const data = await res.json();
-      setReports(Array.isArray(data) ? data : data.content || []);
-      setSales(await salesRes.json());
-    } catch (err) {
-      console.error("Failed to load production reports:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchReports();
-  }, []);
-
-  // Compute distinct products list dynamically from production items & consumptions
-  // The month the cards' figures cover; the balance itself is all-time
+  const debouncedSearch = useDebouncedValue(gridSearchQuery, SEARCH_DEBOUNCE_MS).trim();
+  // The figures on the cards cover this month; the balance itself is all-time
   const month = useMemo(() => currentMonthInSriLanka(), []);
 
-  const products: ProductItem[] = useMemo(() => {
-    interface Totals {
-      produced: number;
-      damages: number;
-      used: number;
-      sold: number;
-    }
-    const empty = (): Totals => ({ produced: 0, damages: 0, used: 0, sold: 0 });
-    // Per product: all-time totals (they make up the balance) and this month's alone
-    const productMap = new Map<string, { all: Totals; month: Totals }>();
-    const add = (name: string, date: string, field: keyof Totals, quantity: number) => {
-      const entry = productMap.get(name) ?? { all: empty(), month: empty() };
-      entry.all[field] += quantity;
-      if (date.startsWith(month.prefix)) entry.month[field] += quantity;
-      productMap.set(name, entry);
-    };
+  // The master card is shown on every page until the user searches
+  const showMasterCard = debouncedSearch === "";
+  const pageSize = showMasterCard ? CARDS_PER_PAGE - 1 : CARDS_PER_PAGE;
 
-    reports.forEach((rep) => {
-      const pName = rep.productType?.trim();
-      if (pName) {
-        add(pName, rep.reportDate, "produced", Number(rep.qtyProduced) || 0);
-        add(pName, rep.reportDate, "damages", Number(rep.damages) || 0);
-      }
+  const query = useMemo(() => {
+    const params = new URLSearchParams({ page: String(gridPage - 1), size: String(pageSize) });
+    if (debouncedSearch) params.set("search", debouncedSearch);
+    return params.toString();
+  }, [gridPage, pageSize, debouncedSearch]);
 
-      // Manufactured items used as components in this report
-      rep.productUsages?.forEach((pu) => {
-        const uName = pu.productName?.trim();
-        if (uName) add(uName, rep.reportDate, "used", Number(pu.amount) || 0);
+  const requestKey = `${query}#${reloadToken}`;
+  // Loading is derived: the cards on screen belong to an older request
+  const loading = grid.key !== requestKey;
+
+  // Only the products of the page on screen are fetched; the server works out their figures
+  useEffect(() => {
+    if (selected !== null) return;
+    const controller = new AbortController();
+
+    fetch(`/api/production/bin/products?${query}`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch production bin cards");
+        return res.json();
+      })
+      .then((data) => {
+        const products: ProductItem[] = (data.content ?? []).map((summary: ProductSummaryDto) => toProductItem(summary));
+        const total: number = data.totalElements ?? 0;
+        setGrid({ key: requestKey, products, total });
+        // The result set shrank underneath us: step back to the last page that exists
+        if (products.length === 0 && total > 0) setGridPage(Math.max(1, data.totalPages ?? 1));
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        console.error("Failed to load production bin cards:", err);
+        setGrid((prev) => ({ ...prev, key: requestKey }));
       });
-    });
 
-    sales.forEach((sale) => add(sale.productName, sale.saleDate, "sold", Number(sale.quantity) || 0));
+    return () => controller.abort();
+  }, [selected, query, requestKey]);
 
-    return Array.from(productMap.entries()).map(([name, totals]) => ({
-      productId: name.toLowerCase().replace(/[^a-z0-9]/g, "-"),
-      productName: name,
-      unitOfMeasure: "PCS",
-      currentStock: Math.max(0, totals.all.produced - totals.all.damages - totals.all.used - totals.all.sold),
-      produced: totals.all.produced,
-      damages: totals.all.damages,
-      used: totals.all.used,
-      sold: totals.all.sold,
-      thisMonth: totals.month,
-    }));
-  }, [reports, sales, month.prefix]);
-
-  // Active product when viewing details
-  const activeProduct = useMemo(() => {
-    if (!selectedProductId || selectedProductId === "all") return null;
-    return products.find((p) => p.productId === selectedProductId) || null;
-  }, [products, selectedProductId]);
-
-  // Compute ledger rows accounting for production inflows and consumption outflows
-  const ledgerRows: ProductionLedgerRow[] = useMemo(() => {
-    interface RawMovement {
-      id: string;
-      // The production entry or sale behind the movement, for editing it
-      sourceId?: string;
-      unitPrice?: number;
-      editedBy?: string | null;
-      editedAt?: string | null;
-      editCount?: number | null;
-      editNote?: string | null;
-      date: string;
-      productName: string;
-      qtyIn: number;
-      qtyOut: number;
-      damage: number;
-      status: ProductionStatusType;
-      materials?: MaterialUsageDto[];
-      productUsages?: ProductUsageDto[];
-      materialCost: number | null;
-      materialCostPartial: boolean;
-      workerName?: string;
-      remarks: string;
-      type: "PRODUCTION" | "CONSUMPTION" | "SALE";
-    }
-
-    const movements: RawMovement[] = [];
-
-    // Both lists arrive newest first; walk them oldest first so entries of the same
-    // day keep the order they were recorded in
-    [...reports].reverse().forEach((rep) => {
-      // 1. Production output movement
-      if (rep.productType) {
-        const inQty = Number(rep.qtyProduced) || 0;
-        const damageQty = Number(rep.damages) || 0;
-        const materials = rep.materials ?? [];
-        const costed = materials.filter((m) => m.unitCost != null);
-        movements.push({
-          id: `prod-${rep.id}`,
-          sourceId: rep.id,
-          editedBy: rep.editedBy,
-          editedAt: rep.editedAt,
-          editCount: rep.editCount,
-          editNote: rep.editNote,
-          date: rep.reportDate,
-          productName: rep.productType,
-          qtyIn: inQty,
-          qtyOut: 0,
-          damage: damageQty,
-          status: rep.status || "STORED",
-          materials: rep.materials,
-          productUsages: rep.productUsages,
-          materialCost:
-            costed.length > 0
-              ? costed.reduce((sum, m) => sum + Number(m.amount) * Number(m.unitCost), 0)
-              : null,
-          materialCostPartial: costed.length > 0 && costed.length < materials.length,
-          workerName: rep.workerName,
-          remarks:
-            damageQty > 0
-              ? `Produced ${inQty} (${damageQty} damaged)`
-              : `Manufactured ${inQty} usable units`,
-          type: "PRODUCTION",
-        });
-      }
-
-      // 2. Component consumption movements
-      if (rep.productUsages && Array.isArray(rep.productUsages)) {
-        rep.productUsages.forEach((pu, idx) => {
-          const uName = pu.productName?.trim();
-          if (!uName) return;
-          const amt = Number(pu.amount) || 0;
-          if (amt <= 0) return;
-
-          movements.push({
-            id: `cons-${rep.id}-${idx}`,
-            date: rep.reportDate,
-            productName: uName,
-            qtyIn: 0,
-            qtyOut: amt,
-            damage: 0,
-            status: "CONSUMED",
-            materialCost: null,
-            materialCostPartial: false,
-            workerName: rep.workerName,
-            remarks: `Used to produce ${rep.productType}`,
-            type: "CONSUMPTION",
-          });
-        });
-      }
-    });
-
-    // 3. Sales
-    [...sales].reverse().forEach((sale) => {
-      movements.push({
-        id: `sale-${sale.id}`,
-        sourceId: sale.id,
-        unitPrice: Number(sale.unitPrice),
-        editedBy: sale.editedBy,
-        editedAt: sale.editedAt,
-        editCount: sale.editCount,
-        editNote: sale.editNote,
-        date: sale.saleDate,
-        productName: sale.productName,
-        qtyIn: 0,
-        qtyOut: Number(sale.quantity) || 0,
-        damage: 0,
-        status: "SOLD",
-        materialCost: null,
-        materialCostPartial: false,
-        remarks: `Sold at ${formatMoney(Number(sale.unitPrice))} per piece · ${formatMoney(
-          Number(sale.unitPrice) * Number(sale.quantity),
-        )} total`,
-        type: "SALE",
-      });
-    });
-
-    // Chronological sort
-    movements.sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-    );
-
-    const balanceMap = new Map<string, number>();
-    const rows: ProductionLedgerRow[] = [];
-
-    movements.forEach((m) => {
-      const prev = balanceMap.get(m.productName) || 0;
-      const closing = prev + m.qtyIn - m.qtyOut - m.damage;
-      balanceMap.set(m.productName, closing);
-
-      // If activeProduct selected, only include movements for that product
-      if (
-        activeProduct &&
-        m.productName.toLowerCase() !== activeProduct.productName.toLowerCase()
-      ) {
-        return;
-      }
-
-      rows.push({
-        ...m,
-        seq: rows.length,
-        openingStock: prev,
-        closingStock: closing,
-      });
-    });
-
-    return rows;
-  }, [reports, sales, activeProduct]);
-
-  // Filtered products for Grid Overview
-  const filteredGridProducts = useMemo(() => {
-    return products.filter((p) =>
-      p.productName.toLowerCase().includes(gridSearchQuery.toLowerCase()),
-    );
-  }, [products, gridSearchQuery]);
-
-  // Dynamic Pagination calculations (Page 1: 1 master + 7 items = 8 cards; Page 2+: 8 cards)
-  const totalGridPages = useMemo(() => {
-    if (gridSearchQuery) {
-      return Math.max(1, Math.ceil(filteredGridProducts.length / 8));
-    }
-    if (filteredGridProducts.length <= 7) return 1;
-    return 1 + Math.ceil((filteredGridProducts.length - 7) / 8);
-  }, [filteredGridProducts.length, gridSearchQuery]);
-
-  const { paginatedGridProducts, displayStart, displayEnd } = useMemo(() => {
-    if (filteredGridProducts.length === 0) {
-      return { paginatedGridProducts: [], displayStart: 0, displayEnd: 0 };
-    }
-
-    if (!gridSearchQuery) {
-      if (gridPage === 1) {
-        const sliced = filteredGridProducts.slice(0, 7);
-        return {
-          paginatedGridProducts: sliced,
-          displayStart: 1,
-          displayEnd: Math.min(7, filteredGridProducts.length),
-        };
-      } else {
-        const start = 7 + (gridPage - 2) * 8;
-        const end = Math.min(start + 8, filteredGridProducts.length);
-        return {
-          paginatedGridProducts: filteredGridProducts.slice(start, end),
-          displayStart: start + 1,
-          displayEnd: end,
-        };
-      }
-    } else {
-      const start = (gridPage - 1) * 8;
-      const end = Math.min(start + 8, filteredGridProducts.length);
-      return {
-        paginatedGridProducts: filteredGridProducts.slice(start, end),
-        displayStart: start + 1,
-        displayEnd: end,
-      };
-    }
-  }, [filteredGridProducts, gridPage, gridSearchQuery]);
+  const paginatedGridProducts = grid.products;
+  const totalGridProducts = grid.total;
+  const totalGridPages = Math.max(1, Math.ceil(totalGridProducts / pageSize));
+  const displayStart = totalGridProducts === 0 ? 0 : (gridPage - 1) * pageSize + 1;
+  const displayEnd = Math.min(gridPage * pageSize, totalGridProducts);
 
   return (
     <Box
@@ -355,7 +131,7 @@ export default function ProductionBinCardView() {
       {/* ------------------------------------------------------------- */}
       {/* VIEW 1: PRODUCTION CARDS OVERVIEW GRID                         */}
       {/* ------------------------------------------------------------- */}
-      {selectedProductId === null && (
+      {selected === null && (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
           {/* Header Row */}
           <Box
@@ -386,7 +162,7 @@ export default function ProductionBinCardView() {
             <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
               <Tooltip title="Refresh stock data">
                 <IconButton
-                  onClick={fetchReports}
+                  onClick={() => setReloadToken((token) => token + 1)}
                   size="small"
                   sx={{
                     bgcolor: "#FFFFFF",
@@ -422,7 +198,10 @@ export default function ProductionBinCardView() {
           >
             <SearchBar
               value={gridSearchQuery}
-              onChange={setGridSearchQuery}
+              onChange={(value) => {
+                setGridSearchQuery(value);
+                setGridPage(1);
+              }}
               placeholder="Search by product"
             />
 
@@ -434,7 +213,7 @@ export default function ProductionBinCardView() {
                     style={{ fontSize: 14, color: "#64748B" }}
                   />
                 }
-                label={`${filteredGridProducts.length} of ${products.length} Products`}
+                label={`${totalGridProducts} ${totalGridProducts === 1 ? "Product" : "Products"}`}
                 size="small"
                 sx={{
                   bgcolor: "#FFFFFF",
@@ -482,8 +261,8 @@ export default function ProductionBinCardView() {
                   gap: 2,
                 }}
               >
-                {/* 1. All Products Combined Master Card (Only on Page 1 when not searching) */}
-                {gridPage === 1 && !gridSearchQuery && (
+                {/* 1. All Products Combined Master Card (hidden while searching) */}
+                {showMasterCard && (
                   <Card
                     elevation={0}
                     sx={{
@@ -504,7 +283,7 @@ export default function ProductionBinCardView() {
                     }}
                   >
                     <CardActionArea
-                      onClick={() => setSelectedProductId("all")}
+                      onClick={() => setSelected({ productName: null })}
                       sx={{
                         p: 2.25,
                         height: "100%",
@@ -640,7 +419,7 @@ export default function ProductionBinCardView() {
                     }}
                   >
                     <CardActionArea
-                      onClick={() => setSelectedProductId(prod.productId)}
+                      onClick={() => setSelected({ productName: prod.productName })}
                       sx={{
                         p: 2.25,
                         height: "100%",
@@ -833,7 +612,7 @@ export default function ProductionBinCardView() {
               </Box>
 
               {/* Modern Pagination Footer */}
-              {filteredGridProducts.length > 0 && (
+              {totalGridProducts > 0 && (
                 <Paper
                   elevation={0}
                   sx={{
@@ -878,7 +657,7 @@ export default function ProductionBinCardView() {
                         fontSize: "0.85rem",
                       }}
                     >
-                      {filteredGridProducts.length}
+                      {totalGridProducts}
                     </Typography>{" "}
                     products
                   </Typography>
@@ -918,14 +697,12 @@ export default function ProductionBinCardView() {
       {/* ------------------------------------------------------------- */}
       {/* VIEW 2: DRILLDOWN PRODUCTION BIN CARD DETAIL TABLE             */}
       {/* ------------------------------------------------------------- */}
-      {selectedProductId !== null && (
+      {selected !== null && (
         <ProductionBinCardDetailView
-          selectedProductId={selectedProductId}
-          activeProduct={activeProduct}
-          ledgerRows={ledgerRows}
-          loading={loading}
-          onBack={() => setSelectedProductId(null)}
-          onRefresh={fetchReports}
+          // A fresh ledger (first page, no filters) for each product opened
+          key={selected.productName ?? ""}
+          productName={selected.productName}
+          onBack={() => setSelected(null)}
         />
       )}
     </Box>

@@ -341,7 +341,7 @@ export default function OverviewView() {
           bg: data.totalDamages > 0 ? TINT_RED : "#F1F5F9",
         },
         {
-          label: "Active workers",
+          label: "Active staff",
           value: formatQty(data.activeWorkers),
           unit: "",
           hint: "Currently active",

@@ -1,5 +1,6 @@
 "use client";
 
+import useDebouncedValue from "@/hooks/useDebouncedValue";
 import * as React from "react";
 import { useState, useEffect, useMemo } from "react";
 import {
@@ -99,25 +100,33 @@ export interface InventoryLog {
   };
 }
 
+// Cards per page; the "All Materials" card takes one of the eight places when nothing is searched
+const CARDS_PER_PAGE = 8;
+const SEARCH_DEBOUNCE_MS = 350;
+
 export default function BinCardView() {
   const searchParams = useSearchParams();
   const queryMaterialId = searchParams?.get("materialId") || searchParams?.get("itemId");
 
-  // Master items & logs
-  const [items, setItems] = useState<Item[]>([]);
   // selectedItemId === null => Overview Grid View; string => Detail View
   const [selectedItemId, setSelectedItemId] = useState<string | null>(queryMaterialId || null);
   // Bumped to make the detail view reload its ledger (after a transaction)
   const [logsReloadToken, setLogsReloadToken] = useState(0);
 
   // UI state
-  const [itemsLoading, setItemsLoading] = useState(true);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
-  // Grid view search & pagination
+  // Grid view search & pagination: only the cards of the page on screen are fetched
   const [gridSearchQuery, setGridSearchQuery] = useState("");
   const [gridPage, setGridPage] = useState(1);
+  const [gridReloadToken, setGridReloadToken] = useState(0);
+  const [grid, setGrid] = useState<{ key: string; items: Item[]; total: number }>({ key: "", items: [], total: 0 });
+  // The material whose ledger is open, with its current stock
+  const [activeItem, setActiveItem] = useState<Item | null>(null);
+  const [activeItemToken, setActiveItemToken] = useState(0);
+  // Every material, for the Load / Deduct picker; fetched the first time the form opens
+  const [pickerItems, setPickerItems] = useState<Item[]>([]);
 
   // Modals state
   const [transactionOpen, setTransactionOpen] = useState(false);
@@ -126,32 +135,92 @@ export default function BinCardView() {
   );
   const [modalInitialItemId, setModalInitialItemId] = useState("");
 
-  // Fetch all items
-  const fetchItems = async () => {
+  const debouncedSearch = useDebouncedValue(gridSearchQuery, SEARCH_DEBOUNCE_MS).trim();
+  // The master card takes one of the eight places on a page until the user searches
+  const showMasterCard = debouncedSearch === "";
+  const pageSize = showMasterCard ? CARDS_PER_PAGE - 1 : CARDS_PER_PAGE;
+
+  const gridQuery = useMemo(() => {
+    const params = new URLSearchParams({
+      page: String(gridPage - 1),
+      size: String(pageSize),
+      sort: "itemName,asc",
+    });
+    if (debouncedSearch) params.set("search", debouncedSearch);
+    return params.toString();
+  }, [gridPage, pageSize, debouncedSearch]);
+
+  const gridRequestKey = `${gridQuery}#${gridReloadToken}`;
+  // Loading is derived: the cards on screen belong to an older request
+  const itemsLoading = grid.key !== gridRequestKey;
+
+  useEffect(() => {
+    if (selectedItemId !== null) return;
+    const controller = new AbortController();
+
+    fetch(`/api/inventory/current?${gridQuery}`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch inventory items");
+        return res.json();
+      })
+      .then((data) => {
+        const items: Item[] = data.content ?? [];
+        const total: number = data.totalElements ?? 0;
+        setGrid({ key: gridRequestKey, items, total });
+        // The result set shrank underneath us: step back to the last page that exists
+        if (items.length === 0 && total > 0) setGridPage(Math.max(1, data.totalPages ?? 1));
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setError("Failed to load items: " + (err instanceof Error ? err.message : "unknown error"));
+        setGrid((prev) => ({ ...prev, key: gridRequestKey }));
+      });
+
+    return () => controller.abort();
+  }, [selectedItemId, gridQuery, gridRequestKey]);
+
+  // The open ledger's material; fetched again after every stock movement so its stock is current
+  useEffect(() => {
+    if (!selectedItemId || selectedItemId === "all") return;
+    const controller = new AbortController();
+
+    fetch(`/api/inventory/current/${selectedItemId}`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch the material");
+        return res.json();
+      })
+      .then((item: Item) => setActiveItem(item))
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setError("Failed to load the material: " + (err instanceof Error ? err.message : "unknown error"));
+      });
+
+    return () => controller.abort();
+  }, [selectedItemId, logsReloadToken, activeItemToken]);
+
+  const reloadGrid = () => setGridReloadToken((token) => token + 1);
+
+  // Every new search starts again from the first page
+  const changeGridSearch = (value: string) => {
+    setGridSearchQuery(value);
+    setGridPage(1);
+  };
+
+  // The picker lists every material by name, so it is loaded once, when a form first needs it
+  const loadPickerItems = async () => {
     try {
-      setItemsLoading(true);
       const res = await fetch("/api/inventory/current");
       if (!res.ok) throw new Error("Failed to fetch inventory items");
       const data = await res.json();
-      setItems(Array.isArray(data) ? data : data.content || []);
-    } catch (err: any) {
-      setError("Failed to load items: " + err.message);
-    } finally {
-      setItemsLoading(false);
+      setPickerItems(Array.isArray(data) ? data : data.content || []);
+    } catch (err) {
+      setError("Failed to load items: " + (err instanceof Error ? err.message : "unknown error"));
     }
   };
 
-  useEffect(() => {
-    fetchItems();
-  }, []);
-
-  useEffect(() => {
-    if (queryMaterialId) {
-      setSelectedItemId(queryMaterialId);
-    }
-  }, [queryMaterialId]);
-
   const handleSelectCard = (itemId: string) => {
+    // Never show the previous material's name and stock while the new one loads
+    setActiveItem(grid.items.find((item) => item.itemId === itemId) ?? null);
     setSelectedItemId(itemId);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", `/dashboard/bin-cards/material?materialId=${itemId}`);
@@ -160,81 +229,18 @@ export default function BinCardView() {
 
   const handleBackToGrid = () => {
     setSelectedItemId(null);
-    fetchItems(); // refresh latest stock counts
+    setActiveItem(null);
+    reloadGrid(); // refresh latest stock counts
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", "/dashboard/bin-cards/material");
     }
   };
 
-  // Selected item object
-  const activeItem = useMemo(() => {
-    if (!selectedItemId || selectedItemId === "all") return null;
-    return items.find((i) => i.itemId === selectedItemId) || null;
-  }, [items, selectedItemId]);
-
-  // Filtered items for Grid Overview
-  const filteredGridItems = useMemo(() => {
-    return items.filter((item) =>
-      item.itemName.toLowerCase().includes(gridSearchQuery.toLowerCase()),
-    );
-  }, [items, gridSearchQuery]);
-
-  // Reset grid page when search query changes
-  useEffect(() => {
-    setGridPage(1);
-  }, [gridSearchQuery]);
-
-  // Dynamic Pagination calculations (Option 1):
-  // When no search (Master Card is on Page 1):
-  //   Page 1: 7 materials + 1 Master Card = 8 cards
-  //   Page 2+: 8 materials per page = 8 cards
-  // When search is active (Master Card hidden):
-  //   8 materials per page = 8 cards
-  const totalGridPages = useMemo(() => {
-    if (gridSearchQuery) {
-      return Math.max(1, Math.ceil(filteredGridItems.length / 8));
-    }
-    if (filteredGridItems.length <= 7) return 1;
-    return 1 + Math.ceil((filteredGridItems.length - 7) / 8);
-  }, [filteredGridItems.length, gridSearchQuery]);
-
-  const { paginatedGridItems, displayItemStart, displayItemEnd } =
-    useMemo(() => {
-      if (filteredGridItems.length === 0) {
-        return {
-          paginatedGridItems: [],
-          displayItemStart: 0,
-          displayItemEnd: 0,
-        };
-      }
-
-      if (!gridSearchQuery) {
-        if (gridPage === 1) {
-          const sliced = filteredGridItems.slice(0, 7);
-          return {
-            paginatedGridItems: sliced,
-            displayItemStart: 1,
-            displayItemEnd: Math.min(7, filteredGridItems.length),
-          };
-        } else {
-          const start = 7 + (gridPage - 2) * 8;
-          const end = Math.min(start + 8, filteredGridItems.length);
-          return {
-            paginatedGridItems: filteredGridItems.slice(start, end),
-            displayItemStart: start + 1,
-            displayItemEnd: end,
-          };
-        }
-      } else {
-        const start = (gridPage - 1) * 8;
-        const end = Math.min(start + 8, filteredGridItems.length);
-        return {
-          paginatedGridItems: filteredGridItems.slice(start, end),
-          displayItemStart: start + 1,
-          displayItemEnd: end,
-        };
-      }
-    }, [filteredGridItems, gridPage, gridSearchQuery]);
+  const paginatedGridItems = grid.items;
+  const totalGridItems = grid.total;
+  const totalGridPages = Math.max(1, Math.ceil(totalGridItems / pageSize));
+  const displayItemStart = totalGridItems === 0 ? 0 : (gridPage - 1) * pageSize + 1;
+  const displayItemEnd = Math.min(gridPage * pageSize, totalGridItems);
 
   // Open modal with preselected item
   const openTransactionModal = (
@@ -247,6 +253,7 @@ export default function BinCardView() {
     setModalInitialItemId(targetId);
     setTransactionType(type);
     setTransactionOpen(true);
+    loadPickerItems();
   };
 
   return (
@@ -288,7 +295,7 @@ export default function BinCardView() {
             <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
               <Tooltip title="Refresh data">
                 <IconButton
-                  onClick={fetchItems}
+                  onClick={reloadGrid}
                   size="small"
                   sx={{
                     bgcolor: "#FFFFFF",
@@ -371,7 +378,7 @@ export default function BinCardView() {
             {/* Search Input Field */}
             <SearchBar
               value={gridSearchQuery}
-              onChange={setGridSearchQuery}
+              onChange={changeGridSearch}
               placeholder="Search by material"
             />
 
@@ -388,7 +395,7 @@ export default function BinCardView() {
                 <Chip
                   size="small"
                   label={`Filtered: "${gridSearchQuery}"`}
-                  onDelete={() => setGridSearchQuery("")}
+                  onDelete={() => changeGridSearch("")}
                   sx={{
                     bgcolor: "#EFF6FF",
                     color: "#1D4ED8",
@@ -412,8 +419,8 @@ export default function BinCardView() {
                 label={
                   itemsLoading
                     ? "Loading..."
-                    : `${filteredGridItems.length} of ${items.length} ${
-                        items.length === 1 ? "Material" : "Materials"
+                    : `${totalGridItems} ${
+                        totalGridItems === 1 ? "Material" : "Materials"
                       }`
                 }
                 size="small"
@@ -464,7 +471,7 @@ export default function BinCardView() {
                 }}
               >
                 {/* Special Global Card: All Inventory Combined Stream (Show on page 1) */}
-                {gridPage === 1 && !gridSearchQuery && (
+                {showMasterCard && (
                   <MasterBinCard onSelect={() => handleSelectCard("all")} />
                 )}
 
@@ -478,7 +485,7 @@ export default function BinCardView() {
                 ))}
 
                 {/* Empty Search Result State */}
-                {filteredGridItems.length === 0 && gridSearchQuery && (
+                {totalGridItems === 0 && gridSearchQuery && (
                   <Box
                     sx={{
                       gridColumn: "1 / -1",
@@ -528,7 +535,7 @@ export default function BinCardView() {
                     <Button
                       variant="outlined"
                       size="small"
-                      onClick={() => setGridSearchQuery("")}
+                      onClick={() => changeGridSearch("")}
                       sx={{
                         mt: 0.5,
                         borderRadius: "8px",
@@ -549,7 +556,7 @@ export default function BinCardView() {
               </Box>
 
               {/* Modern Pagination Footer for Bin Card Grid */}
-              {filteredGridItems.length > 0 && (
+              {totalGridItems > 0 && (
                 <Paper
                   elevation={0}
                   sx={{
@@ -594,7 +601,7 @@ export default function BinCardView() {
                         fontSize: "0.85rem",
                       }}
                     >
-                      {filteredGridItems.length}
+                      {totalGridItems}
                     </Typography>{" "}
                     materials
                   </Typography>
@@ -648,7 +655,7 @@ export default function BinCardView() {
           onBack={handleBackToGrid}
           onTransaction={openTransactionModal}
           onError={setError}
-          onChanged={fetchItems}
+          onChanged={() => setActiveItemToken((token) => token + 1)}
         />
       )}
 
@@ -662,14 +669,15 @@ export default function BinCardView() {
         onSuccess={(msg) => {
           setSuccessMsg(msg);
           setTimeout(() => setSuccessMsg(""), 3000);
-          fetchItems();
+          loadPickerItems();
           if (selectedItemId) setLogsReloadToken((token) => token + 1);
+          else reloadGrid();
         }}
         onError={(msg) => {
           setError(msg);
           setTimeout(() => setError(""), 5000);
         }}
-        items={items}
+        items={pickerItems}
         initialItemId={modalInitialItemId}
       />
 

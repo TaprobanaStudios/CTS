@@ -24,8 +24,8 @@ import ArrowForwardRoundedIcon from "@mui/icons-material/ArrowForwardRounded";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { z } from "zod";
 import { Item } from "./BinCardView";
+import { useAuth } from "@/auth/AuthContext";
 
-const DEFAULT_AUTHORIZED_BY = "Admin";
 const CURRENCY = "Rs.";
 
 // Loading stock only needs material, quantity and authorizer; a deduction must say why
@@ -73,7 +73,10 @@ export default function TransactionModal({
     useState<string>(initialItemId);
   const [amount, setAmount] = useState("");
   const [unitCost, setUnitCost] = useState("");
-  const [authorizedBy, setAuthorizedBy] = useState(DEFAULT_AUTHORIZED_BY);
+  // Filled in with whoever is signed in
+  const { user } = useAuth();
+  const defaultAuthorizedBy = user.fullName;
+  const [authorizedBy, setAuthorizedBy] = useState(defaultAuthorizedBy);
   const [remarks, setRemarks] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formErrors, setFormErrors] = useState<{
@@ -93,12 +96,12 @@ export default function TransactionModal({
       setTransactionItemId(initialItemId);
       setAmount("");
       setUnitCost("");
-      setAuthorizedBy(DEFAULT_AUTHORIZED_BY);
+      setAuthorizedBy(defaultAuthorizedBy);
       setRemarks("");
       setFormErrors({});
       setSubmitting(false);
     }
-  }, [open, initialItemId]);
+  }, [open, initialItemId, defaultAuthorizedBy]);
 
   const selectedItem = items.find((i) => i.itemId === transactionItemId);
   const currentStock = selectedItem?.currentStock ?? 0;
@@ -497,7 +500,7 @@ export default function TransactionModal({
           onChange={(e) => setAuthorizedBy(e.target.value)}
           // Never leave the authorizer empty: fall back to the default on blur
           onBlur={() => {
-            if (!authorizedBy.trim()) setAuthorizedBy(DEFAULT_AUTHORIZED_BY);
+            if (!authorizedBy.trim()) setAuthorizedBy(defaultAuthorizedBy);
           }}
           error={!!formErrors.authorizedBy}
           helperText={formErrors.authorizedBy}

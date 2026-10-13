@@ -543,7 +543,7 @@ export default function InventoryView() {
       sx={{
         width: "100%",
         // One screen tall on laptops, so the table scrolls instead of the page
-        height: { xs: "auto", md: "calc(100vh - 48px)" },
+        height: { xs: "auto", md: "calc(100vh - var(--page-chrome, 48px))" },
         display: "flex",
         flexDirection: "column",
         gap: 2.5,

@@ -1,9 +1,9 @@
-import OverviewView from "@/sections/overview/OverviewView";
+import DashboardHome from "@/sections/overview/DashboardHome";
 
 export const metadata = {
-  title: "Dashboard Overview",
+  title: "Dashboard",
 };
 
 export default function DashboardPage() {
-  return <OverviewView />;
+  return <DashboardHome />;
 }

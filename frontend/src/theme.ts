@@ -51,7 +51,7 @@ const theme = createTheme({
     divider: "#E2E8F0", // Clean, subtle border color for table rows
   },
   typography: {
-    fontFamily: "inherit", // will use geist from layout
+    fontFamily: "inherit", // Roboto, set on <html> in the root layout
     h4: {
       fontWeight: 700,
       letterSpacing: "-0.02em",

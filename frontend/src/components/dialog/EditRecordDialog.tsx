@@ -19,6 +19,7 @@ import {
 import { useTheme } from "@mui/material/styles";
 import CloseIcon from "@mui/icons-material/Close";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import { useAuth } from "@/auth/AuthContext";
 
 export interface EditRecordField {
   name: string;
@@ -45,7 +46,6 @@ interface EditRecordDialogProps {
   onSubmit: (values: Record<string, string>) => Promise<void>;
 }
 
-const DEFAULT_EDITED_BY = "Admin";
 const CONFIRM_WORD = "yes";
 
 const fieldSx = {
@@ -81,9 +81,12 @@ export default function EditRecordDialog({
   const theme = useTheme();
   const fullScreen = useMediaQuery(theme.breakpoints.down("sm"));
 
+  const { user } = useAuth();
+
   const [values, setValues] = React.useState<Record<string, string>>({
     ...initialValues,
-    editedBy: DEFAULT_EDITED_BY,
+    // The server records the signed-in user whatever is sent here
+    editedBy: user.username,
   });
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [submitError, setSubmitError] = React.useState("");
@@ -271,10 +274,10 @@ export default function EditRecordDialog({
         <TextField
           label="Edited By"
           fullWidth
+          disabled
           value={values.editedBy ?? ""}
-          onChange={(e) => setValue("editedBy", e.target.value)}
           error={!!errors.editedBy}
-          helperText={errors.editedBy || "Saved with the entry, along with the date and time of this change"}
+          helperText={errors.editedBy || "Your account. Saved with the entry, along with the date and time of this change"}
           sx={{ ...fieldSx, gridColumn: "1 / -1" }}
         />
 

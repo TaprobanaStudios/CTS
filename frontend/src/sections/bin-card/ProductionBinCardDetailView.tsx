@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import {
   Box,
@@ -20,7 +20,7 @@ import CustomTable, {
   CustomTableColumn,
   CustomTableSort,
 } from "@/components/table/CustomTable";
-import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import BackLink from "@/components/nav/BackLink";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import TrendingDownIcon from "@mui/icons-material/TrendingDown";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
@@ -36,6 +36,8 @@ import {
 import EditRecordDialog, { EditRecordField } from "@/components/dialog/EditRecordDialog";
 import EditedNote from "@/components/table/EditedNote";
 import { currentMonthInSriLanka, formatDate } from "@/utils/datetime";
+import { useAuth } from "@/auth/AuthContext";
+import useDebouncedValue from "@/hooks/useDebouncedValue";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 
 export type ProductionStatusType =
@@ -126,13 +128,124 @@ export interface ProductItem {
 }
 
 interface ProductionBinCardDetailViewProps {
-  selectedProductId: string;
-  activeProduct: ProductItem | null;
-  ledgerRows: ProductionLedgerRow[];
-  loading: boolean;
+  // The product whose ledger is shown; null for every product together
+  productName: string | null;
   onBack: () => void;
-  onRefresh: () => void;
 }
+
+// A product's figures as the server sends them
+export interface ProductSummaryDto {
+  productName: string | null;
+  currentStock: number;
+  produced: number;
+  damages: number;
+  used: number;
+  sold: number;
+  thisMonth: {
+    produced: number;
+    damages: number;
+    used: number;
+    sold: number;
+    materialCost?: number | null;
+    materialCostPartial?: boolean;
+  };
+}
+
+export const toProductItem = (summary: ProductSummaryDto, fallbackName = ""): ProductItem => {
+  const productName = summary.productName ?? fallbackName;
+  return {
+    productId: productName.toLowerCase().replace(/[^a-z0-9]/g, "-"),
+    productName,
+    unitOfMeasure: "PCS",
+    currentStock: summary.currentStock,
+    produced: summary.produced,
+    damages: summary.damages,
+    used: summary.used,
+    sold: summary.sold,
+    thisMonth: summary.thisMonth,
+  };
+};
+
+// One ledger line as the server sends it
+interface LedgerRowDto {
+  id: string;
+  seq: number;
+  type: ProductionLedgerRow["type"];
+  date: string;
+  productName: string;
+  openingStock: number;
+  qtyIn: number;
+  qtyOut: number;
+  damage: number;
+  closingStock: number;
+  sourceId?: string | null;
+  workerName?: string | null;
+  usedFor?: string | null;
+  status?: ProductionStatusType | null;
+  materials?: MaterialUsageDto[] | null;
+  productUsages?: ProductUsageDto[] | null;
+  // Missing for clerks, who do not see prices
+  unitPrice?: number | null;
+  editedBy?: string | null;
+  editedAt?: string | null;
+  editCount?: number | null;
+  editNote?: string | null;
+}
+
+const toLedgerRow = (dto: LedgerRowDto): ProductionLedgerRow => {
+  const materials = dto.materials ?? [];
+  const costed = materials.filter((m) => m.unitCost != null);
+  const unitPrice = dto.unitPrice != null ? Number(dto.unitPrice) : undefined;
+
+  let status: ProductionStatusType = dto.status || "STORED";
+  let remarks = dto.damage > 0 ? `Produced ${dto.qtyIn} (${dto.damage} damaged)` : `Manufactured ${dto.qtyIn} usable units`;
+  if (dto.type === "CONSUMPTION") {
+    status = "CONSUMED";
+    remarks = `Used to produce ${dto.usedFor ?? "another product"}`;
+  } else if (dto.type === "SALE") {
+    status = "SOLD";
+    remarks =
+      unitPrice != null
+        ? `Sold at ${formatMoney(unitPrice)} per piece · ${formatMoney(unitPrice * dto.qtyOut)} total`
+        : "Sold";
+  }
+
+  return {
+    id: dto.id,
+    seq: dto.seq,
+    date: dto.date,
+    productName: dto.productName,
+    openingStock: dto.openingStock,
+    qtyIn: dto.qtyIn,
+    qtyOut: dto.qtyOut,
+    damage: dto.damage,
+    closingStock: dto.closingStock,
+    status,
+    materials: dto.materials ?? undefined,
+    productUsages: dto.productUsages ?? undefined,
+    materialCost: costed.length > 0 ? costed.reduce((sum, m) => sum + Number(m.amount) * Number(m.unitCost), 0) : null,
+    materialCostPartial: costed.length > 0 && costed.length < materials.length,
+    workerName: dto.workerName ?? undefined,
+    remarks,
+    type: dto.type,
+    sourceId: dto.sourceId ?? undefined,
+    unitPrice,
+    editedBy: dto.editedBy,
+    editedAt: dto.editedAt,
+    editCount: dto.editCount,
+    editNote: dto.editNote,
+  };
+};
+
+interface LedgerPage {
+  // The request this page of rows answers
+  key: string;
+  rows: ProductionLedgerRow[];
+  total: number;
+}
+
+const DEFAULT_ROWS_PER_PAGE = 10;
+const SEARCH_DEBOUNCE_MS = 350;
 
 type MovementTab = "all" | "in" | "out" | "damage";
 
@@ -178,77 +291,113 @@ const materialTooltip = (m: MaterialUsageDto) =>
       : "no buying cost recorded",
   ].join(" · ");
 
-// Everything a row can be searched by, as one lower-case string
-const searchText = (row: ProductionLedgerRow) =>
-  [
-    row.productName,
-    STATUS_CONFIG[row.status]?.label,
-    row.remarks,
-    row.workerName,
-    ...(row.materials ?? []).flatMap((m) => [m.itemName, m.batchCode]),
-    ...(row.productUsages ?? []).map((pu) => pu.productName),
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+export default function ProductionBinCardDetailView({ productName, onBack }: ProductionBinCardDetailViewProps) {
+  const isAllProducts = productName === null;
 
-export default function ProductionBinCardDetailView({
-  selectedProductId,
-  activeProduct,
-  ledgerRows,
-  loading,
-  onBack,
-  onRefresh,
-}: ProductionBinCardDetailViewProps) {
-  const isAllProducts = selectedProductId === "all" || !activeProduct;
-
+  const { isAdmin } = useAuth();
+  const [ledger, setLedger] = useState<LedgerPage>({ key: "", rows: [], total: 0 });
+  const [summary, setSummary] = useState<ProductSummaryDto | null>(null);
   const [detailSearchQuery, setDetailSearchQuery] = useState("");
   const [movementTab, setMovementTab] = useState<MovementTab>("all");
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
   const [sort, setSort] = useState<CustomTableSort>(DEFAULT_SORT);
+  const [refreshToken, setRefreshToken] = useState(0);
   const [editingRow, setEditingRow] = useState<ProductionLedgerRow | null>(null);
+
+  const debouncedSearch = useDebouncedValue(detailSearchQuery, SEARCH_DEBOUNCE_MS);
+  const refresh = () => setRefreshToken((token) => token + 1);
+
+  const query = useMemo(() => {
+    const params = new URLSearchParams({
+      page: String(page),
+      size: String(rowsPerPage),
+      direction: sort.direction,
+    });
+    if (productName !== null) params.set("product", productName);
+    if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+    if (movementTab !== "all") params.set("movement", movementTab);
+    return params.toString();
+  }, [page, rowsPerPage, sort.direction, productName, debouncedSearch, movementTab]);
+
+  const requestKey = `${query}#${refreshToken}`;
+  // Loading is derived: the page on screen belongs to an older request
+  const loading = ledger.key !== requestKey;
+
+  // One page of the ledger; the server works out the balances, filters and order
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetch(`/api/production/bin/ledger?${query}`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to load the ledger");
+        return res.json();
+      })
+      .then((data) => {
+        const rows: ProductionLedgerRow[] = (data.content ?? []).map(toLedgerRow);
+        const total: number = data.totalElements ?? 0;
+        const lastPage = Math.max(0, (data.totalPages ?? 1) - 1);
+        setLedger({ key: requestKey, rows, total });
+        // The result set shrank underneath us: step back to the last page that exists
+        if (rows.length === 0 && total > 0) setPage((prev) => Math.min(prev, lastPage));
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        console.error("Failed to load the production ledger:", err);
+        setLedger((prev) => ({ ...prev, key: requestKey }));
+      });
+
+    return () => controller.abort();
+  }, [query, requestKey]);
+
+  // Stock on hand and this month's totals, which do not depend on the tab, search or page
+  useEffect(() => {
+    const controller = new AbortController();
+    const params = productName !== null ? `?${new URLSearchParams({ product: productName })}` : "";
+
+    fetch(`/api/production/bin/summary${params}`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to load the product summary");
+        return res.json();
+      })
+      .then((data: ProductSummaryDto) => setSummary(data))
+      .catch((err) => {
+        if (!controller.signal.aborted) console.error("Failed to load the product summary:", err);
+      });
+
+    return () => controller.abort();
+  }, [productName, refreshToken]);
+
+  const activeProduct: ProductItem | null = useMemo(() => {
+    if (productName === null) return null;
+    return summary
+      ? toProductItem(summary, productName)
+      : toProductItem(
+          { productName, currentStock: 0, produced: 0, damages: 0, used: 0, sold: 0, thisMonth: { produced: 0, damages: 0, used: 0, sold: 0 } },
+          productName,
+        );
+  }, [productName, summary]);
 
   // Totals for the product(s) on screen for the current month, before any tab or search
   // filter. All-time figures would only ever grow; the running balance covers the long view.
   const totals = useMemo(() => {
-    const { prefix: monthPrefix, label: monthLabel } = currentMonthInSriLanka();
-    let produced = 0;
-    let damaged = 0;
-    let used = 0;
-    let sold = 0;
-    let materialCost = 0;
-    let hasCost = false;
-    let costPartial = false;
-    ledgerRows.forEach((row) => {
-      if (!row.date.startsWith(monthPrefix)) return;
-      produced += row.qtyIn;
-      damaged += row.damage;
-      if (row.type === "SALE") sold += row.qtyOut;
-      else used += row.qtyOut;
-      if (row.materialCost != null) {
-        materialCost += row.materialCost;
-        hasCost = true;
-      }
-      if (row.materialCostPartial) costPartial = true;
-    });
-    return { produced, damaged, used, sold, materialCost, hasCost, costPartial, monthLabel };
-  }, [ledgerRows]);
-
-  const visibleRows = useMemo(() => {
-    const query = detailSearchQuery.trim().toLowerCase();
-    const direction = sort.direction === "asc" ? 1 : -1;
-    return ledgerRows
-      .filter((row) => {
-        if (movementTab === "in" && row.qtyIn <= 0) return false;
-        if (movementTab === "out" && row.qtyOut <= 0) return false;
-        if (movementTab === "damage" && row.damage <= 0) return false;
-        return !query || searchText(row).includes(query);
-      })
-      .sort((a, b) => (a.seq - b.seq) * direction);
-  }, [ledgerRows, movementTab, detailSearchQuery, sort]);
+    const { label: monthLabel } = currentMonthInSriLanka();
+    const month = summary?.thisMonth;
+    return {
+      produced: month?.produced ?? 0,
+      damaged: month?.damages ?? 0,
+      used: month?.used ?? 0,
+      sold: month?.sold ?? 0,
+      materialCost: Number(month?.materialCost ?? 0),
+      hasCost: month?.materialCost != null,
+      costPartial: month?.materialCostPartial ?? false,
+      monthLabel,
+    };
+  }, [summary]);
 
   const hasActiveFilters = detailSearchQuery !== "" || movementTab !== "all";
 
-  const columns: CustomTableColumn[] = [
+  const allColumns: CustomTableColumn[] = [
     {
       field: "date",
       headerName: "Date",
@@ -494,6 +643,8 @@ export default function ProductionBinCardDetailView({
       },
     },
   ];
+  // Only admins can correct saved entries
+  const columns = isAdmin ? allColumns : allColumns.filter((column) => column.field !== "actions");
 
   const editingSale = editingRow?.type === "SALE";
   const editFields: EditRecordField[] = editingSale
@@ -546,7 +697,7 @@ export default function ProductionBinCardDetailView({
       const body = await res.json().catch(() => null);
       throw new Error(body?.message || "Failed to save the change");
     }
-    onRefresh();
+    refresh();
   };
 
   const stats = [
@@ -576,7 +727,10 @@ export default function ProductionBinCardDetailView({
     >
       <Tabs
         value={movementTab}
-        onChange={(_, value) => setMovementTab(value)}
+        onChange={(_, value) => {
+          setMovementTab(value);
+          setPage(0);
+        }}
         variant="scrollable"
         scrollButtons={false}
         sx={{
@@ -620,8 +774,11 @@ export default function ProductionBinCardDetailView({
 
       <SearchBar
         value={detailSearchQuery}
-        onChange={setDetailSearchQuery}
-        placeholder="Search product, material or stock ID"
+        onChange={(value) => {
+          setDetailSearchQuery(value);
+          setPage(0);
+        }}
+        placeholder="Search product, material or worker"
         maxWidth={{ xs: "100%", sm: 320 }}
       />
     </Box>
@@ -653,36 +810,26 @@ export default function ProductionBinCardDetailView({
 
   return (
     <Box
+      // This view shows its own breadcrumb, so the clerk layout hides the shorter one
+      data-own-back
       sx={{
         display: "flex",
         flexDirection: "column",
         gap: 2.5,
         // One screen tall on laptops, so the table scrolls instead of the page
-        height: { md: "calc(100vh - 48px)" },
+        height: { md: "calc(100vh - var(--page-chrome, 48px))" },
       }}
     >
       {/* Back Navigation Bar */}
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 2 }}>
-        <Button
-          variant="outlined"
-          disableElevation
-          startIcon={<ArrowBackIcon sx={{ fontSize: 18 }} />}
-          onClick={onBack}
-          sx={{
-            borderRadius: "8px",
-            borderColor: "#CBD5E1",
-            color: "#334155",
-            fontWeight: 600,
-            fontSize: "0.825rem",
-            textTransform: "none",
-            px: 1.75,
-            height: 36,
-            bgcolor: "#FFFFFF",
-            "&:hover": { bgcolor: "#F8FAFC", borderColor: "#2563EB" },
-          }}
-        >
-          Back to All Bin Cards
-        </Button>
+        <BackLink
+          // Clerks come here from their home page; admins use the sidebar
+          trail={[
+            ...(isAdmin ? [] : [{ label: "Home", href: "/dashboard" }]),
+            { label: "Production Bin Card", onClick: onBack },
+          ]}
+          current={activeProduct ? activeProduct.productName : "All Products Combined Ledger"}
+        />
 
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
           {/* Straight to the production form with this product filled in */}
@@ -711,7 +858,7 @@ export default function ProductionBinCardDetailView({
           )}
         <Tooltip title="Refresh ledger">
           <IconButton
-            onClick={onRefresh}
+            onClick={refresh}
             size="small"
             sx={{
               bgcolor: "#FFFFFF",
@@ -881,13 +1028,26 @@ export default function ProductionBinCardDetailView({
         }}
       >
         <CustomTable
-          rows={visibleRows}
+          rows={ledger.rows}
+          pagination={{
+            page,
+            rowsPerPage,
+            totalRows: ledger.total,
+            onPageChange: setPage,
+            onRowsPerPageChange: (next) => {
+              setRowsPerPage(next);
+              setPage(0);
+            },
+          }}
           columns={columns}
           loading={loading}
           toolbar={ledgerToolbar}
           emptyState={ledgerEmptyState}
           sort={sort}
-          onSortChange={setSort}
+          onSortChange={(next) => {
+            setSort(next);
+            setPage(0);
+          }}
         />
       </Box>
 
