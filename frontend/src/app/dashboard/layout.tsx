@@ -69,6 +69,11 @@ function SidebarShell({ children }: Props) {
     { text: "Overview", icon: <DashboardIcon sx={{ fontSize: 20 }} />, path: "/dashboard" },
     { text: "Staff", icon: <PeopleIcon sx={{ fontSize: 20 }} />, path: "/dashboard/workers" },
     {
+      text: "Login Accounts",
+      icon: <ManageAccountsOutlinedIcon sx={{ fontSize: 20 }} />,
+      path: "/dashboard/users",
+    },
+    {
       text: "Inventory",
       icon: <InventoryIcon sx={{ fontSize: 20 }} />,
       path: "/dashboard/inventory",
@@ -99,11 +104,6 @@ function SidebarShell({ children }: Props) {
       text: "Edit History",
       icon: <HistoryOutlinedIcon sx={{ fontSize: 20 }} />,
       path: "/dashboard/history",
-    },
-    {
-      text: "Login Accounts",
-      icon: <ManageAccountsOutlinedIcon sx={{ fontSize: 20 }} />,
-      path: "/dashboard/users",
     },
   ];
   // Clerks move around from their home page and the breadcrumb, not from a menu
