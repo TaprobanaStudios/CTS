@@ -15,6 +15,7 @@ public class CurrentInventoryDto {
     private String itemName;
     private com.taprobanastudios.main.model.enums.UnitOfMeasure unitOfMeasure;
     private BigDecimal currentStock;
+    private com.taprobanastudios.main.model.enums.StockStatus status;
     private java.time.LocalDateTime updatedAt;
     private boolean isDefaultMaterial;
 }

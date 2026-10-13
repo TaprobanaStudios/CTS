@@ -9,8 +9,10 @@ import org.springframework.web.bind.annotation.*;
 
 
 
+import com.taprobanastudios.main.dto.ProductionFilterDto;
 import com.taprobanastudios.main.dto.ProductionItemResponseDto;
-import java.util.List;
+import com.taprobanastudios.main.dto.ProductionItemUpdateDto;
+import org.springframework.data.domain.Pageable;
 
 @RestController
 @RequestMapping("/api/production")
@@ -20,8 +22,23 @@ public class ProductionController extends AbstractController {
     private final ProductionService productionService;
 
     @GetMapping("/items")
-    public ResponseEntity<List<ProductionItemResponseDto>> getAllProductionItems() {
-        return sendSuccessResponse(productionService.getAllProductionItems());
+    public ResponseEntity<?> getAllProductionItems(
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size,
+            ProductionFilterDto filter,
+            Pageable pageable) {
+        // Without page/size the full list is returned (product stock is derived from it)
+        if (page == null && size == null) {
+            return sendSuccessResponse(productionService.getAllProductionItems());
+        }
+        return sendSuccessResponse(productionService.getProductionItems(filter, pageable));
+    }
+
+    @PutMapping("/items/{itemId}")
+    public ResponseEntity<ProductionItemResponseDto> updateProductionItem(
+            @PathVariable java.util.UUID itemId,
+            @RequestBody ProductionItemUpdateDto updateDto) {
+        return sendSuccessResponse(productionService.updateProductionItem(itemId, updateDto));
     }
 
     @PostMapping("/report")

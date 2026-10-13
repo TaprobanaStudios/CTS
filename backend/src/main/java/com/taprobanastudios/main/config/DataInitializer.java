@@ -3,6 +3,8 @@ package com.taprobanastudios.main.config;
 import com.taprobanastudios.main.model.Item;
 import com.taprobanastudios.main.model.enums.UnitOfMeasure;
 import com.taprobanastudios.main.repository.ItemRepository;
+import com.taprobanastudios.main.service.EditHistoryService;
+import com.taprobanastudios.main.service.InventoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
@@ -18,6 +20,8 @@ import java.util.List;
 public class DataInitializer {
 
     private final ItemRepository itemRepository;
+    private final InventoryService inventoryService;
+    private final EditHistoryService editHistoryService;
 
     @Bean
     public CommandLineRunner initDefaultMaterials() {
@@ -41,6 +45,9 @@ public class DataInitializer {
                     log.info("Created default material: {}", material);
                 }
             }
+
+            inventoryService.backfillStockBatches();
+            editHistoryService.backfillEarlierEdits();
         };
     }
 }
