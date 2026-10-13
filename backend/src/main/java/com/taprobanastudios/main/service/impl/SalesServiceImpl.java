@@ -131,6 +131,12 @@ public class SalesServiceImpl implements SalesService {
 
     @Override
     @Transactional(readOnly = true)
+    public List<ProductSaleDto> getSalesByIds(java.util.Collection<java.util.UUID> saleIds) {
+        return productSaleRepository.findAllById(saleIds).stream().map(this::mapToDto).collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<ProductStockDto> getProductStocks() {
         Map<String, ProductStockDto> stocks = new LinkedHashMap<>();
         // Material cost and usable pieces of the productions that had costed materials

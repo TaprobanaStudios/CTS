@@ -34,6 +34,9 @@ public interface InventoryService {
 
     Page<CurrentInventoryDto> getCurrentInventory(InventoryFilterDto filter, Pageable pageable);
 
+    // One material with its current stock
+    CurrentInventoryDto getCurrentInventoryItem(UUID itemId);
+
     InventorySummaryDto getInventorySummary();
 
     ItemDto createItem(ItemDto itemDto);

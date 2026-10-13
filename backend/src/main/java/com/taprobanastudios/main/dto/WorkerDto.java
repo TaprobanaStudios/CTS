@@ -12,4 +12,6 @@ public class WorkerDto {
     private String nicNumber;
     private String address;
     private java.time.LocalDate startDate;
+    // WORKER (no login) or CLERK; set by the system, not by the staff form
+    private com.taprobanastudios.main.model.enums.UserRole role;
 }

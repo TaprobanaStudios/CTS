@@ -280,6 +280,13 @@ public class InventoryServiceImpl implements InventoryService {
 
     @Override
     @Transactional(readOnly = true)
+    public CurrentInventoryDto getCurrentInventoryItem(UUID itemId) {
+        return mapToCurrentInventoryDto(itemRepository.findById(itemId)
+                .orElseThrow(() -> new ResourceNotFoundException("Item not found for ID: " + itemId)));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public InventorySummaryDto getInventorySummary() {
         log.info("Fetching inventory summary");
         long healthy = 0;

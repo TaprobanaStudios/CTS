@@ -1,7 +1,7 @@
 import WorkersView from "@/sections/workers/WorkersView";
 
 export const metadata = {
-  title: "Workers",
+  title: "Staff",
 };
 
 export default function WorkersPage() {

@@ -95,6 +95,13 @@ public class ProductionServiceImpl implements ProductionService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<ProductionItemResponseDto> getProductionItemsByIds(java.util.Collection<UUID> itemIds) {
+        return productionItemRepository.findAllById(itemIds).stream()
+                .map(this::mapToResponseDto).collect(Collectors.toList());
+    }
+
+    @Override
     @Transactional
     public ProductionItemResponseDto updateProductionItem(UUID itemId, ProductionItemUpdateDto updateDto) {
         ProductionItem item = productionItemRepository.findById(itemId)

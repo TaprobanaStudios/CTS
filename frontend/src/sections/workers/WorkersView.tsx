@@ -81,7 +81,7 @@ export default function WorkersView() {
     try {
       setLoading(true);
       const res = await fetch("/api/workers");
-      if (!res.ok) throw new Error("Failed to fetch workers");
+      if (!res.ok) throw new Error("Failed to fetch staff");
       const data = await res.json();
       setWorkers(data);
     } catch (err: any) {
@@ -144,7 +144,7 @@ export default function WorkersView() {
         body: JSON.stringify(currentWorker),
       });
 
-      if (!res.ok) throw new Error("Failed to save worker");
+      if (!res.ok) throw new Error("Failed to save staff member");
 
       handleClose();
       fetchWorkers();
@@ -157,7 +157,7 @@ export default function WorkersView() {
     if (!workerToDelete) return;
     try {
       const res = await fetch(`/api/workers/${workerToDelete.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to deactivate worker");
+      if (!res.ok) throw new Error("Failed to deactivate staff member");
       fetchWorkers();
       setDeleteDialogOpen(false);
       setWorkerToDelete(null);
@@ -174,7 +174,7 @@ export default function WorkersView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...workerToActivate, status: "ACTIVE" }),
       });
-      if (!res.ok) throw new Error("Failed to activate worker");
+      if (!res.ok) throw new Error("Failed to activate staff member");
       fetchWorkers();
       setActivateDialogOpen(false);
       setWorkerToActivate(null);
@@ -251,6 +251,30 @@ export default function WorkersView() {
           {params.value || "-"}
         </Typography>
       ),
+    },
+    {
+      field: "role",
+      headerName: "Role",
+      flex: 0.7,
+      minWidth: 100,
+      align: "center",
+      renderCell: (params) => {
+        // Clerks have a login; workers do not
+        const isClerk = params.value === "CLERK";
+        return (
+          <Chip
+            label={isClerk ? "Clerk" : "Worker"}
+            size="small"
+            sx={{
+              bgcolor: isClerk ? "#EFF6FF" : "#F1F5F9",
+              color: isClerk ? "#2563EB" : "#475569",
+              fontWeight: 700,
+              fontSize: "0.75rem",
+              height: 24,
+            }}
+          />
+        );
+      },
     },
     {
       field: "status",
@@ -352,7 +376,7 @@ export default function WorkersView() {
           }}
           variant="h4"
         >
-          Workers Directory
+          Staff Directory
         </Typography>
 
         <Button
@@ -374,7 +398,7 @@ export default function WorkersView() {
             },
           }}
         >
-          Add Worker
+          Add Staff
         </Button>
       </Box>
 
@@ -420,7 +444,7 @@ export default function WorkersView() {
         slotProps={{ paper: { sx: { borderRadius: "16px" } } }}
       >
         <DialogTitle sx={{ fontWeight: 800, color: "#0F172A" }}>
-          {isEditing ? "Edit Worker" : "Add New Worker"}
+          {isEditing ? "Edit Staff Member" : "Add New Staff Member"}
         </DialogTitle>
         <DialogContent
           dividers
@@ -429,7 +453,7 @@ export default function WorkersView() {
           <TextField
             autoFocus
             margin="normal"
-            label="Worker Name"
+            label="Staff Name"
             type="text"
             fullWidth
             variant="outlined"
@@ -521,7 +545,7 @@ export default function WorkersView() {
         slotProps={{ paper: { sx: { borderRadius: "16px", p: 1 } } }}
       >
         <DialogTitle sx={{ fontWeight: 800, color: "error.main" }}>
-          Deactivate Worker?
+          Deactivate Staff Member?
         </DialogTitle>
         <DialogContent>
           <Typography variant="body1" sx={{ mb: 2, mt: 1 }}>
@@ -568,7 +592,7 @@ export default function WorkersView() {
         slotProps={{ paper: { sx: { borderRadius: "16px", p: 1 } } }}
       >
         <DialogTitle sx={{ fontWeight: 800, color: "success.main" }}>
-          Activate Worker?
+          Activate Staff Member?
         </DialogTitle>
         <DialogContent>
           <Typography variant="body1" sx={{ mb: 2, mt: 1 }}>

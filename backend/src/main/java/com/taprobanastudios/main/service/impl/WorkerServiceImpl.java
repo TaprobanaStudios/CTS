@@ -2,7 +2,9 @@ package com.taprobanastudios.main.service.impl;
 
 import com.taprobanastudios.main.dto.WorkerDto;
 import com.taprobanastudios.main.model.Worker;
+import com.taprobanastudios.main.model.enums.UserRole;
 import com.taprobanastudios.main.repository.WorkerRepository;
+import com.taprobanastudios.main.service.UserService;
 import com.taprobanastudios.main.service.WorkerService;
 import com.taprobanastudios.main.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +22,7 @@ import java.util.stream.Collectors;
 public class WorkerServiceImpl implements WorkerService {
 
     private final WorkerRepository workerRepository;
+    private final UserService userService;
 
     @Override
     @Transactional
@@ -32,6 +35,8 @@ public class WorkerServiceImpl implements WorkerService {
         worker.setContactNumber(workerDto.getContactNumber());
         worker.setNicNumber(workerDto.getNicNumber());
         worker.setAddress(workerDto.getAddress());
+        // New staff have no login; an admin can make them a clerk later
+        worker.setRole(UserRole.WORKER);
 
         Worker savedWorker = workerRepository.save(worker);
         return mapToDto(savedWorker);
@@ -53,6 +58,7 @@ public class WorkerServiceImpl implements WorkerService {
         worker.setAddress(workerDtoDetails.getAddress());
 
         Worker updatedWorker = workerRepository.save(worker);
+        userService.syncWithStaff(updatedWorker);
         return mapToDto(updatedWorker);
     }
 
@@ -82,6 +88,8 @@ public class WorkerServiceImpl implements WorkerService {
                 .orElseThrow(() -> new ResourceNotFoundException("Worker not found with id: " + id));
         worker.setStatus("DEACTIVATED");
         workerRepository.save(worker);
+        // A deactivated staff member can no longer sign in
+        userService.syncWithStaff(worker);
     }
 
     private WorkerDto mapToDto(Worker worker) {
@@ -93,6 +101,7 @@ public class WorkerServiceImpl implements WorkerService {
         dto.setNicNumber(worker.getNicNumber());
         dto.setAddress(worker.getAddress());
         dto.setStartDate(worker.getCreatedAt().toLocalDate());
+        dto.setRole(worker.getRole());
         return dto;
     }
 }

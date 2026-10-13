@@ -24,12 +24,13 @@ import useDebouncedValue from "@/hooks/useDebouncedValue";
 import EditRecordDialog, { EditRecordField } from "@/components/dialog/EditRecordDialog";
 import EditedNote from "@/components/table/EditedNote";
 import { formatDate } from "@/utils/datetime";
+import { useAuth } from "@/auth/AuthContext";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import TrendingDownIcon from "@mui/icons-material/TrendingDown";
-import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import BackLink from "@/components/nav/BackLink";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorIcon from "@mui/icons-material/Error";
@@ -128,6 +129,7 @@ export default function BinCardDetailView({
   const isAllMaterials = selectedItemId === "all";
 
   const [ledger, setLedger] = useState<LedgerPage>({ key: "", rows: [], total: 0 });
+  const { isAdmin } = useAuth();
   const [detailSearchQuery, setDetailSearchQuery] = useState("");
   const [movementTab, setMovementTab] = useState<MovementTab>("all");
   const [page, setPage] = useState(0);
@@ -196,7 +198,7 @@ export default function BinCardDetailView({
 
   const hasActiveFilters = detailSearchQuery !== "" || movementTab !== "all";
 
-  const columns: CustomTableColumn[] = [
+  const allColumns: CustomTableColumn[] = [
     {
       field: "transactionDate",
       headerName: "Date",
@@ -395,6 +397,8 @@ export default function BinCardDetailView({
         ),
     },
   ];
+  // Only admins can correct saved entries
+  const columns = isAdmin ? allColumns : allColumns.filter((column) => column.field !== "actions");
 
   // What can be corrected depends on the kind of entry
   const editingIsLoad = Number(editingLog?.qtyIn) > 0;
@@ -559,12 +563,14 @@ export default function BinCardDetailView({
 
   return (
     <Box
+      // This view shows its own breadcrumb, so the clerk layout hides the shorter one
+      data-own-back
       sx={{
         display: "flex",
         flexDirection: "column",
         gap: 2.5,
         // One screen tall on laptops, so the table scrolls instead of the page
-        height: { md: "calc(100vh - 48px)" },
+        height: { md: "calc(100vh - var(--page-chrome, 48px))" },
       }}
     >
       {/* Back Navigation Bar */}
@@ -577,26 +583,14 @@ export default function BinCardDetailView({
           gap: 2,
         }}
       >
-        <Button
-          variant="outlined"
-          disableElevation
-          startIcon={<ArrowBackIcon sx={{ fontSize: 18 }} />}
-          onClick={onBack}
-          sx={{
-            borderRadius: "8px",
-            borderColor: "#CBD5E1",
-            color: "#334155",
-            fontWeight: 600,
-            fontSize: "0.825rem",
-            textTransform: "none",
-            px: 1.75,
-            height: 36,
-            bgcolor: "#FFFFFF",
-            "&:hover": { bgcolor: "#F8FAFC", borderColor: "#2563EB" },
-          }}
-        >
-          Back to All Bin Cards
-        </Button>
+        <BackLink
+          // Clerks come here from their home page; admins use the sidebar
+          trail={[
+            ...(isAdmin ? [] : [{ label: "Home", href: "/dashboard" }]),
+            { label: "Material Bin Card", onClick: onBack },
+          ]}
+          current={currentItemName}
+        />
 
         {/* In-Detail Action Buttons */}
         <Stack direction="row" spacing={1.5}>

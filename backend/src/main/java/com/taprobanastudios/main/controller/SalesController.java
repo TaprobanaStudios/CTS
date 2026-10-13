@@ -17,6 +17,7 @@ public class SalesController extends AbstractController {
     private final SalesService salesService;
 
     @GetMapping
+    // Admin only (see SecurityConfig): it carries prices
     public ResponseEntity<List<ProductSaleDto>> getAllSales() {
         return sendSuccessResponse(salesService.getAllSales());
     }
@@ -28,7 +29,10 @@ public class SalesController extends AbstractController {
 
     @PutMapping("/{saleId}")
     public ResponseEntity<ProductSaleDto> updateSale(@PathVariable java.util.UUID saleId,
-                                                     @RequestBody ProductSaleDto saleDto) {
+                                                     @RequestBody ProductSaleDto saleDto,
+                                                     org.springframework.security.core.Authentication authentication) {
+        // Recorded as whoever is signed in, whatever the request says
+        saleDto.setEditedBy(authentication.getName());
         return sendUpdatedResponse(salesService.updateSale(saleId, saleDto));
     }
 

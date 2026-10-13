@@ -13,5 +13,8 @@ public interface SalesService {
 
     List<ProductSaleDto> getAllSales();
 
+    // The sales behind one page of a ledger
+    List<ProductSaleDto> getSalesByIds(java.util.Collection<java.util.UUID> saleIds);
+
     List<ProductStockDto> getProductStocks();
 }

@@ -53,6 +53,11 @@ public class InventoryController extends AbstractController {
         return sendSuccessResponse(inventoryService.getCurrentInventory(filter, pageable));
     }
 
+    @GetMapping("/current/{itemId}")
+    public ResponseEntity<com.taprobanastudios.main.dto.CurrentInventoryDto> getCurrentInventoryItem(@PathVariable UUID itemId) {
+        return sendSuccessResponse(inventoryService.getCurrentInventoryItem(itemId));
+    }
+
     @GetMapping("/summary")
     public ResponseEntity<InventorySummaryDto> getInventorySummary() {
         return sendSuccessResponse(inventoryService.getInventorySummary());
@@ -78,7 +83,10 @@ public class InventoryController extends AbstractController {
 
     @PutMapping("/bin/{logId}")
     public ResponseEntity<InventoryLogDto> updateBinLog(@PathVariable UUID logId,
-                                                        @RequestBody InventoryLogUpdateDto updateDto) {
+                                                        @RequestBody InventoryLogUpdateDto updateDto,
+                                                        org.springframework.security.core.Authentication authentication) {
+        // Recorded as whoever is signed in, whatever the request says
+        updateDto.setEditedBy(authentication.getName());
         return sendUpdatedResponse(inventoryService.updateBinLog(logId, updateDto));
     }
 
