@@ -3,6 +3,9 @@ package com.taprobanastudios.main.config;
 import com.taprobanastudios.main.model.Item;
 import com.taprobanastudios.main.model.enums.UnitOfMeasure;
 import com.taprobanastudios.main.repository.ItemRepository;
+import com.taprobanastudios.main.service.EditHistoryService;
+import com.taprobanastudios.main.service.InventoryService;
+import com.taprobanastudios.main.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
@@ -18,6 +21,13 @@ import java.util.List;
 public class DataInitializer {
 
     private final ItemRepository itemRepository;
+    private final InventoryService inventoryService;
+    private final UserService userService;
+
+    // Password of the first admin account; override with ADMIN_INITIAL_PASSWORD
+    @org.springframework.beans.factory.annotation.Value("${ADMIN_INITIAL_PASSWORD:Abcd@1234}")
+    private String initialAdminPassword;
+    private final EditHistoryService editHistoryService;
 
     @Bean
     public CommandLineRunner initDefaultMaterials() {
@@ -41,6 +51,12 @@ public class DataInitializer {
                     log.info("Created default material: {}", material);
                 }
             }
+
+            // Only when there are no users at all; the password should be changed after first sign-in
+            userService.createInitialAdmin("admin", initialAdminPassword);
+
+            inventoryService.backfillStockBatches();
+            editHistoryService.backfillEarlierEdits();
         };
     }
 }

@@ -29,4 +29,13 @@ public class ProductionMaterialUsage extends Auditable<String> {
 
     @Column(name = "amount", precision = 10, scale = 2, nullable = false)
     private BigDecimal amount;
+
+    // The stock this material was taken from, when it came from a single one
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "batch_id")
+    private InventoryLog batch;
+
+    // Buying cost per unit at the time of use; null when the stock had no cost recorded
+    @Column(name = "unit_cost", precision = 12, scale = 2)
+    private BigDecimal unitCost;
 }
