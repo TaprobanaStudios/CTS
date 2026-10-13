@@ -1,0 +1,7 @@
+# Never copy local secrets or build output into the image
+.env
+.env.*
+target
+.idea
+.vscode
+.git
