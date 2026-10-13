@@ -81,6 +81,15 @@ export interface InventoryLog {
   qtyIn: number;
   qtyOut: number;
   closingStock: number;
+  unitCost?: number | null;
+  // Stock ID: the load's own, or the stock a deduction was taken from
+  batchCode?: string | null;
+  // true for deductions made automatically by a production entry: those cannot be edited
+  productionDeduction?: boolean;
+  editedBy?: string | null;
+  editedAt?: string | null;
+  editCount?: number | null;
+  editNote?: string | null;
   authorizedBy: string;
   remarks: string;
   item?: {
@@ -98,10 +107,10 @@ export default function BinCardView() {
   const [items, setItems] = useState<Item[]>([]);
   // selectedItemId === null => Overview Grid View; string => Detail View
   const [selectedItemId, setSelectedItemId] = useState<string | null>(queryMaterialId || null);
-  const [logs, setLogs] = useState<InventoryLog[]>([]);
+  // Bumped to make the detail view reload its ledger (after a transaction)
+  const [logsReloadToken, setLogsReloadToken] = useState(0);
 
   // UI state
-  const [loading, setLoading] = useState(false);
   const [itemsLoading, setItemsLoading] = useState(true);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
@@ -139,36 +148,11 @@ export default function BinCardView() {
   useEffect(() => {
     if (queryMaterialId) {
       setSelectedItemId(queryMaterialId);
-      fetchLogs(queryMaterialId);
     }
   }, [queryMaterialId]);
 
-  // Fetch logs when entering detail view or switching items
-  const fetchLogs = async (itemId: string | null) => {
-    if (itemId === null) {
-      setLogs([]);
-      return;
-    }
-    setLoading(true);
-    try {
-      const url =
-        itemId === "all"
-          ? "/api/inventory/bin/all"
-          : `/api/inventory/bin/${itemId}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch bin logs");
-      const data = await res.json();
-      setLogs(Array.isArray(data) ? data : data.content || []);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleSelectCard = (itemId: string) => {
     setSelectedItemId(itemId);
-    fetchLogs(itemId);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", `/dashboard/bin-cards/material?materialId=${itemId}`);
     }
@@ -176,7 +160,6 @@ export default function BinCardView() {
 
   const handleBackToGrid = () => {
     setSelectedItemId(null);
-    setLogs([]);
     fetchItems(); // refresh latest stock counts
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", "/dashboard/bin-cards/material");
@@ -658,13 +641,14 @@ export default function BinCardView() {
       {/* ------------------------------------------------------------- */}
       {selectedItemId !== null && (
         <BinCardDetailView
+          key={selectedItemId}
           selectedItemId={selectedItemId}
           activeItem={activeItem}
-          logs={logs}
-          loading={loading}
+          reloadToken={logsReloadToken}
           onBack={handleBackToGrid}
-          onRefresh={() => fetchLogs(selectedItemId)}
           onTransaction={openTransactionModal}
+          onError={setError}
+          onChanged={fetchItems}
         />
       )}
 
@@ -679,7 +663,7 @@ export default function BinCardView() {
           setSuccessMsg(msg);
           setTimeout(() => setSuccessMsg(""), 3000);
           fetchItems();
-          if (selectedItemId) fetchLogs(selectedItemId);
+          if (selectedItemId) setLogsReloadToken((token) => token + 1);
         }}
         onError={(msg) => {
           setError(msg);

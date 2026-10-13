@@ -17,4 +17,8 @@ public class ProductionItemResponseDto {
     private java.util.List<MaterialUsageDto> materials;
     private java.util.List<ProductUsageDto> productUsages;
     private Integer damages;
+    private String editedBy;
+    private java.time.LocalDateTime editedAt;
+    private Integer editCount;
+    private String editNote;
 }

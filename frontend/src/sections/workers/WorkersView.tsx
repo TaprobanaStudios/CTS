@@ -258,6 +258,7 @@ export default function WorkersView() {
       flex: 0.8,
       minWidth: 110,
       align: "center",
+      mobileSlot: "badge",
       renderCell: (params) => {
         const isActive = params.value === "ACTIVE";
         return (
@@ -285,6 +286,7 @@ export default function WorkersView() {
       sortable: false,
       width: 110,
       align: "center",
+      mobileSlot: "footer",
       renderCell: (params: any) => (
         <Box sx={{ display: "flex", justifyContent: "center", gap: 0.5 }}>
           <IconButton

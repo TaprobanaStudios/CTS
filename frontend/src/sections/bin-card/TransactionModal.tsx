@@ -10,20 +10,34 @@ import {
   MenuItem,
   Button,
   CircularProgress,
+  IconButton,
+  InputAdornment,
   alpha,
-  Grid,
+  useMediaQuery,
+  Alert,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import AddIcon from "@mui/icons-material/Add";
 import RemoveIcon from "@mui/icons-material/Remove";
+import CloseIcon from "@mui/icons-material/Close";
+import ArrowForwardRoundedIcon from "@mui/icons-material/ArrowForwardRounded";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { z } from "zod";
 import { Item } from "./BinCardView";
 
-const transactionSchema = z.object({
-  amount: z.number().positive("Amount must be greater than 0"),
-  authorizedBy: z.string().min(1, "Authorized By Name is required"),
-  remarks: z.string().min(1, "Remarks are required"),
-});
+const DEFAULT_AUTHORIZED_BY = "Admin";
+const CURRENCY = "Rs.";
+
+// Loading stock only needs material, quantity and authorizer; a deduction must say why
+const buildTransactionSchema = (remarksRequired: boolean) =>
+  z.object({
+    amount: z.number().positive("Amount must be greater than 0"),
+    unitCost: z.number().nonnegative("Unit cost cannot be negative").optional(),
+    authorizedBy: z.string().trim().min(1, "Authorized By Name is required"),
+    remarks: remarksRequired
+      ? z.string().trim().min(1, "Remarks are required")
+      : z.string().trim(),
+  });
 
 interface TransactionModalProps {
   open: boolean;
@@ -35,6 +49,14 @@ interface TransactionModalProps {
   initialItemId?: string;
 }
 
+const formatNumber = (num: number) => Math.round((num + Number.EPSILON) * 100) / 100;
+
+const formatMoney = (num: number) =>
+  `${CURRENCY} ${num.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
 export default function TransactionModal({
   open,
   type,
@@ -44,26 +66,34 @@ export default function TransactionModal({
   items,
   initialItemId = "",
 }: TransactionModalProps) {
+  const theme = useTheme();
+  const fullScreen = useMediaQuery(theme.breakpoints.down("sm"));
+
   const [transactionItemId, setTransactionItemId] =
     useState<string>(initialItemId);
   const [amount, setAmount] = useState("");
-  const [authorizedBy, setAuthorizedBy] = useState("");
+  const [unitCost, setUnitCost] = useState("");
+  const [authorizedBy, setAuthorizedBy] = useState(DEFAULT_AUTHORIZED_BY);
   const [remarks, setRemarks] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formErrors, setFormErrors] = useState<{
     amount?: string;
+    unitCost?: string;
     authorizedBy?: string;
     remarks?: string;
   }>({});
 
   const isLoad = type === "load";
+  const accent = isLoad ? "#10B981" : "#EF4444";
+  const accentDark = isLoad ? "#059669" : "#DC2626";
 
   // Reset state when modal opens
   useEffect(() => {
     if (open) {
       setTransactionItemId(initialItemId);
       setAmount("");
-      setAuthorizedBy("");
+      setUnitCost("");
+      setAuthorizedBy(DEFAULT_AUTHORIZED_BY);
       setRemarks("");
       setFormErrors({});
       setSubmitting(false);
@@ -72,10 +102,7 @@ export default function TransactionModal({
 
   const selectedItem = items.find((i) => i.itemId === transactionItemId);
   const currentStock = selectedItem?.currentStock ?? 0;
-
-  const formatNumber = (num: number) => {
-    return Math.round((num + Number.EPSILON) * 100) / 100;
-  };
+  const unit = selectedItem?.unitOfMeasure || "";
 
   // Real-time over-deduction check and math
   const numAmount = parseFloat(amount);
@@ -88,11 +115,17 @@ export default function TransactionModal({
       : currentStock - (hasValidAmount ? numAmount : 0),
   );
 
+  const numUnitCost = parseFloat(unitCost);
+  const hasUnitCost = isLoad && !isNaN(numUnitCost) && numUnitCost >= 0;
+  const totalCost = hasUnitCost && hasValidAmount ? numAmount * numUnitCost : null;
+
   const handleSubmit = async () => {
     if (isOverDeducting) return;
 
-    const result = transactionSchema.safeParse({
+    const result = buildTransactionSchema(!isLoad).safeParse({
       amount: hasValidAmount ? numAmount : 0,
+      // Buying cost is optional and only applies when loading stock
+      unitCost: isLoad && unitCost.trim() !== "" ? Number(unitCost) : undefined,
       authorizedBy,
       remarks,
     });
@@ -121,14 +154,16 @@ export default function TransactionModal({
           itemId: transactionItemId,
           itemName: selectedItem?.itemName || "",
           amount: result.data.amount,
+          unitCost: result.data.unitCost,
           authorizedBy: result.data.authorizedBy,
           remarks: result.data.remarks,
         }),
       });
 
       if (!res.ok) {
-        const errorText = await res.text();
-        throw new Error(errorText || `Failed to ${type} stock`);
+        // The server explains why, e.g. how much is actually available
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || `Failed to ${type} stock`);
       }
 
       onSuccess(`Successfully ${isLoad ? "loaded" : "deducted"} stock!`);
@@ -146,43 +181,72 @@ export default function TransactionModal({
     "& .MuiOutlinedInput-root": {
       width: "100%",
       borderRadius: "12px",
-      bgcolor: "#F8FAFC",
+      bgcolor: "#FFFFFF",
       "& fieldset": { borderColor: "#E2E8F0" },
       "&:hover fieldset": { borderColor: "#CBD5E1" },
       "&.Mui-focused fieldset": {
-        borderColor: isLoad ? "#10B981" : "#EF4444",
+        borderColor: accent,
         borderWidth: "2px",
       },
     },
     "& .MuiInputLabel-root.Mui-focused": {
-      color: isLoad ? "#10B981" : "#EF4444",
+      color: accent,
     },
+    "& .MuiFormHelperText-root": { mx: 0.25 },
   };
+
+  const adornmentSx = {
+    "& .MuiTypography-root": { fontSize: "0.8rem", fontWeight: 700, color: "#64748B" },
+  };
+
+  const balanceLabelSx = {
+    fontSize: "0.68rem",
+    fontWeight: 700,
+    color: "#94A3B8",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+  };
+
+  const balanceUnit = (
+    <Box component="span" sx={{ fontSize: "0.75rem", color: "#64748B", fontWeight: 700 }}>
+      {unit}
+    </Box>
+  );
+
+  const optionalTag = (
+    <Box component="span" sx={{ color: "#94A3B8", fontWeight: 500 }}>
+      {" "}
+      (optional)
+    </Box>
+  );
 
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="md"
+      maxWidth="sm"
       fullWidth
+      fullScreen={fullScreen}
       slotProps={{
         paper: {
           sx: {
-            borderRadius: "20px",
+            borderRadius: { xs: 0, sm: "20px" },
             boxShadow: "none",
-            border: "1px solid #E2E8F0",
+            border: { xs: "none", sm: "1px solid #E2E8F0" },
             bgcolor: "#FFFFFF",
             backgroundImage: "none",
           },
         },
       }}
     >
+      {/* Rendered as a div: the title holds block content, which a heading cannot contain */}
       <DialogTitle
+        component="div"
         sx={{
-          p: 3,
+          p: { xs: 2, sm: 3 },
           display: "flex",
           alignItems: "center",
-          gap: 2,
+          gap: 1.5,
           borderBottom: "1px solid #E2E8F0",
         }}
       >
@@ -191,8 +255,8 @@ export default function TransactionModal({
             width: 44,
             height: 44,
             borderRadius: "12px",
-            bgcolor: isLoad ? alpha("#10B981", 0.1) : alpha("#EF4444", 0.1),
-            color: isLoad ? "#10B981" : "#EF4444",
+            bgcolor: alpha(accent, 0.1),
+            color: accent,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -201,248 +265,278 @@ export default function TransactionModal({
         >
           {isLoad ? <AddIcon /> : <RemoveIcon />}
         </Box>
-        <Typography
-          variant="h6"
-          sx={{
-            fontWeight: 800,
-            color: "#0F172A",
-            fontSize: "1.25rem",
-            letterSpacing: "-0.01em",
-          }}
-        >
-          {isLoad ? "Load Stock into Bin Card" : "Deduct Stock from Bin Card"}
-        </Typography>
-      </DialogTitle>
-
-      <DialogContent sx={{ p: 0 }}>
-        <Box
-          sx={{
-            display: "flex",
-            flexDirection: { xs: "row" },
-            width: "100%",
-            minHeight: "100%",
-          }}
-        >
-          {/* Left Column: Form Fields */}
-          <Box
+        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          <Typography
+            component="h2"
             sx={{
-              flex: 1,
-              p: 4,
-              display: "flex",
-              flexDirection: "column",
-              gap: 3,
-              boxSizing: "border-box",
-              width: "50%",
+              fontWeight: 800,
+              color: "#0F172A",
+              fontSize: { xs: "1.1rem", sm: "1.25rem" },
+              letterSpacing: "-0.01em",
+              lineHeight: 1.2,
             }}
           >
-            <TextField
-              select
-              label="Select Material / Item"
-              fullWidth
-              value={transactionItemId}
-              onChange={(e) => {
-                setTransactionItemId(e.target.value);
-                setAmount("");
-                setFormErrors({});
-              }}
-              sx={textFieldSx}
-            >
-              <MenuItem value="" disabled>
-                <em>Select a material</em>
-              </MenuItem>
-              {items.map((item) => (
-                <MenuItem key={item.itemId} value={item.itemId}>
-                  <Typography sx={{ fontWeight: 600, color: "#1E293B" }}>
-                    {item.itemName}
-                  </Typography>
-                </MenuItem>
-              ))}
-            </TextField>
+            {isLoad ? "Load Stock" : "Deduct Stock"}
+          </Typography>
+          <Typography sx={{ color: "#64748B", fontSize: "0.8rem", mt: 0.25 }}>
+            {isLoad
+              ? "Add received material to the bin card"
+              : "Issue or write off material from the bin card"}
+          </Typography>
+        </Box>
+        <IconButton
+          aria-label="Close"
+          onClick={onClose}
+          disabled={submitting}
+          size="small"
+          sx={{ color: "#64748B", alignSelf: "flex-start" }}
+        >
+          <CloseIcon sx={{ fontSize: 20 }} />
+        </IconButton>
+      </DialogTitle>
 
+      <DialogContent
+        sx={{
+          // DialogTitle zeroes the top padding of the content that follows it
+          p: { xs: 2, sm: 3 },
+          pt: { xs: "16px !important", sm: "24px !important" },
+          display: "flex",
+          flexDirection: "column",
+          gap: 2.5,
+          bgcolor: "#F8FAFC",
+        }}
+      >
+        <TextField
+          select
+          label="Material"
+          fullWidth
+          value={transactionItemId}
+          onChange={(e) => {
+            setTransactionItemId(e.target.value);
+            setAmount("");
+            setFormErrors({});
+          }}
+          slotProps={{ select: { displayEmpty: true } }}
+          sx={textFieldSx}
+        >
+          <MenuItem value="" disabled>
+            <Typography sx={{ color: "#94A3B8" }}>Select a material</Typography>
+          </MenuItem>
+          {items.map((item) => (
+            <MenuItem key={item.itemId} value={item.itemId}>
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "baseline",
+                  gap: 2,
+                  width: "100%",
+                }}
+              >
+                <Typography sx={{ fontWeight: 600, color: "#1E293B" }}>
+                  {item.itemName}
+                </Typography>
+                <Typography sx={{ fontSize: "0.75rem", color: "#64748B", flexShrink: 0 }}>
+                  {formatNumber(item.currentStock ?? 0)} {item.unitOfMeasure}
+                </Typography>
+              </Box>
+            </MenuItem>
+          ))}
+        </TextField>
+
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", sm: isLoad ? "1fr 1fr" : "1fr" },
+            gap: 2.5,
+            alignItems: "start",
+          }}
+        >
+          <TextField
+            label="Quantity"
+            type="number"
+            variant="outlined"
+            fullWidth
+            placeholder="0"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            error={!!formErrors.amount || isOverDeducting}
+            helperText={
+              isOverDeducting
+                ? `Only ${formatNumber(currentStock)} ${unit} is available in inventory`
+                : formErrors.amount
+            }
+            slotProps={{
+              htmlInput: { min: 0, step: "any", inputMode: "decimal" },
+              input: {
+                endAdornment: unit ? (
+                  <InputAdornment position="end" sx={adornmentSx}>
+                    {unit}
+                  </InputAdornment>
+                ) : undefined,
+              },
+            }}
+            sx={textFieldSx}
+          />
+
+          {isLoad && (
             <TextField
-              label={`Quantity - (${selectedItem?.unitOfMeasure || "Units"})`}
+              label={
+                <>
+                  Unit Cost
+                  {optionalTag}
+                </>
+              }
               type="number"
               variant="outlined"
               fullWidth
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              error={!!formErrors.amount || isOverDeducting}
+              placeholder="0.00"
+              value={unitCost}
+              onChange={(e) => setUnitCost(e.target.value)}
+              error={!!formErrors.unitCost}
               helperText={
-                isOverDeducting
-                  ? `Exceeds available stock (${formatNumber(currentStock)} ${selectedItem?.unitOfMeasure || ""})`
-                  : formErrors.amount ||
-                    (isLoad
-                      ? "Enter the quantity of material to adjust"
-                      : "Enter the quantity of material to deduct/issue")
+                formErrors.unitCost ||
+                (totalCost != null
+                  ? `Total: ${formatMoney(totalCost)}`
+                  : `Buying cost per ${unit || "unit"}`)
               }
-              sx={{
-                ...textFieldSx,
-                "& .MuiFormHelperText-root": {
-                  color: isOverDeducting ? "#EF4444" : undefined,
-                  fontWeight: isOverDeducting ? 600 : 400,
+              slotProps={{
+                htmlInput: { min: 0, step: "0.01", inputMode: "decimal" },
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start" sx={adornmentSx}>
+                      {CURRENCY}
+                    </InputAdornment>
+                  ),
                 },
               }}
-            />
-
-            <TextField
-              label="Authorized By"
-              variant="outlined"
-              fullWidth
-              value={authorizedBy}
-              onChange={(e) => setAuthorizedBy(e.target.value)}
-              error={!!formErrors.authorizedBy}
-              helperText={
-                formErrors.authorizedBy ||
-                "Name of the person authorizing this transaction"
-              }
               sx={textFieldSx}
             />
-          </Box>
+          )}
+        </Box>
 
-          {/* Right Column: Visuals & Remarks */}
+        {/* Stock balance preview: current -> after this transaction */}
+        {selectedItem && (
           <Box
             sx={{
-              flex: 1,
-              p: 4,
-              bgcolor: "#F8FAFC",
-              borderLeft: "1px solid #E2E8F0",
               display: "flex",
-              flexDirection: "column",
-              gap: 3,
-              boxSizing: "border-box",
-              width: "50%",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 1.5,
+              p: 2,
+              bgcolor: "#FFFFFF",
+              borderRadius: "14px",
+              border: "1px solid",
+              borderColor: isOverDeducting ? "#FECACA" : "#E2E8F0",
             }}
           >
-            {/* Projected Balance Card */}
-            {!isLoad && (
-              <Box
+            <Box sx={{ minWidth: 0 }}>
+              <Typography sx={balanceLabelSx}>Current Stock</Typography>
+              <Typography
+                sx={{ fontSize: "1.25rem", fontWeight: 800, color: "#0F172A", lineHeight: 1.3 }}
+              >
+                {formatNumber(currentStock)} {balanceUnit}
+              </Typography>
+            </Box>
+
+            <ArrowForwardRoundedIcon sx={{ color: "#CBD5E1", flexShrink: 0 }} />
+
+            <Box sx={{ minWidth: 0, textAlign: "right" }}>
+              <Typography sx={balanceLabelSx}>
+                {isLoad ? "After Load" : "After Deduction"}
+              </Typography>
+              <Typography
                 sx={{
-                  width: "100%",
-                  bgcolor: "#FFFFFF",
-                  borderRadius: "16px",
-                  p: 2.5,
-                  border: "1px solid #E2E8F0",
-                  boxShadow: "none",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  textAlign: "center",
-                  boxSizing: "border-box",
+                  fontSize: "1.25rem",
+                  fontWeight: 800,
+                  lineHeight: 1.3,
+                  color: isOverDeducting ? "#EF4444" : hasValidAmount ? accentDark : "#0F172A",
+                  transition: "color 0.2s ease",
                 }}
               >
-                <Typography
-                  variant="overline"
+                {projectedStock} {balanceUnit}
+              </Typography>
+              {isOverDeducting && (
+                <Box
                   sx={{
-                    color: "#64748B",
-                    fontWeight: 700,
-                    letterSpacing: "0.1em",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "flex-end",
+                    gap: 0.5,
+                    color: "#EF4444",
                   }}
                 >
-                  Available Stock Balance
-                </Typography>
-
-                {!selectedItem ? (
-                  <Typography
-                    sx={{ color: "#94A3B8", mt: 0.5, fontSize: "0.9rem" }}
-                  >
-                    Please select a material
+                  <WarningAmberIcon sx={{ fontSize: 14 }} />
+                  <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                    Insufficient Stock
                   </Typography>
-                ) : (
-                  <>
-                    <Typography
-                      sx={{
-                        fontSize: "2.25rem",
-                        fontWeight: 800,
-                        color: isOverDeducting
-                          ? "#EF4444"
-                          : hasValidAmount
-                            ? isLoad
-                              ? "#10B981"
-                              : "#F59E0B"
-                            : "#0F172A",
-                        lineHeight: 1.1,
-                        mt: 0.5,
-                        mb: 0.25,
-                        transition: "color 0.2s ease",
-                      }}
-                    >
-                      {projectedStock}
-                    </Typography>
-
-                    {hasValidAmount ? (
-                      <Typography
-                        variant="body2"
-                        sx={{ color: "#64748B", fontWeight: 600, mt: 0.5 }}
-                      >
-                        {formatNumber(currentStock)} {isLoad ? "+" : "-"}{" "}
-                        {formatNumber(numAmount)} ={" "}
-                        {formatNumber(projectedStock)}{" "}
-                        {selectedItem.unitOfMeasure}
-                      </Typography>
-                    ) : (
-                      <Typography
-                        variant="subtitle2"
-                        sx={{ color: "#64748B", fontWeight: 600 }}
-                      >
-                        {selectedItem.unitOfMeasure}
-                      </Typography>
-                    )}
-
-                    {/* Over deduction visual warning */}
-                    {isOverDeducting && (
-                      <Box
-                        sx={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 1,
-                          mt: 1.5,
-                          color: "#EF4444",
-                        }}
-                      >
-                        <WarningAmberIcon fontSize="small" />
-                        <Typography variant="caption" sx={{ fontWeight: 700 }}>
-                          Insufficient Stock
-                        </Typography>
-                      </Box>
-                    )}
-                  </>
-                )}
-              </Box>
-            )}
-            <TextField
-              label="Remarks / Reference Note"
-              variant="outlined"
-              fullWidth
-              multiline
-              rows={isLoad ? 9 : 5}
-              value={remarks}
-              onChange={(e) => setRemarks(e.target.value)}
-              error={!!formErrors.remarks}
-              helperText={
-                formErrors.remarks ||
-                "Provide reason or invoice/batch reference"
-              }
-              sx={{
-                ...textFieldSx,
-                width: "100%",
-                "& .MuiOutlinedInput-root": {
-                  ...textFieldSx["& .MuiOutlinedInput-root"],
-                  bgcolor: "#FFFFFF",
-                  width: "100%",
-                },
-              }}
-            />
+                </Box>
+              )}
+            </Box>
           </Box>
-        </Box>
+        )}
+
+        {/* Why the deduction is refused, and what going ahead would have broken */}
+        {isOverDeducting && (
+          <Alert severity="warning" sx={{ borderRadius: "12px" }}>
+            <Typography sx={{ fontWeight: 700, fontSize: "0.85rem" }}>
+              Only {formatNumber(currentStock)} {unit} of {selectedItem?.itemName} is available in inventory.
+            </Typography>
+            <Typography sx={{ fontSize: "0.82rem" }}>
+              Deducting {formatNumber(numAmount)} {unit} would make the stock negative and affect balances,
+              costs and reports across the whole system. Load the stock first or reduce the quantity.
+            </Typography>
+          </Alert>
+        )}
+
+        <TextField
+          label="Authorized By"
+          variant="outlined"
+          fullWidth
+          value={authorizedBy}
+          onChange={(e) => setAuthorizedBy(e.target.value)}
+          // Never leave the authorizer empty: fall back to the default on blur
+          onBlur={() => {
+            if (!authorizedBy.trim()) setAuthorizedBy(DEFAULT_AUTHORIZED_BY);
+          }}
+          error={!!formErrors.authorizedBy}
+          helperText={formErrors.authorizedBy}
+          sx={textFieldSx}
+        />
+
+        <TextField
+          label={
+            <>
+              Remarks / Reference Note
+              {isLoad && optionalTag}
+            </>
+          }
+          variant="outlined"
+          fullWidth
+          multiline
+          rows={2}
+          placeholder={
+            isLoad ? "Supplier, invoice or batch reference" : "Reason for this deduction"
+          }
+          value={remarks}
+          onChange={(e) => setRemarks(e.target.value)}
+          error={!!formErrors.remarks}
+          helperText={formErrors.remarks}
+          sx={{
+            ...textFieldSx,
+            "& .MuiOutlinedInput-input": { p: "10px 14px" },
+          }}
+        />
       </DialogContent>
 
       <DialogActions
         sx={{
-          p: 3,
-          pt: 2,
+          p: { xs: 2, sm: 3 },
+          py: { xs: 1.5, sm: 2 },
           gap: 1.5,
           borderTop: "1px solid #E2E8F0",
           bgcolor: "#FFFFFF",
+          "& > :not(style) ~ :not(style)": { ml: 0 },
         }}
       >
         <Button
@@ -455,6 +549,7 @@ export default function TransactionModal({
             borderRadius: "10px",
             px: 3,
             py: 1,
+            flex: { xs: 1, sm: "none" },
             "&:hover": { bgcolor: "#F1F5F9" },
           }}
         >
@@ -472,12 +567,13 @@ export default function TransactionModal({
             borderRadius: "10px",
             px: 4,
             py: 1,
-            bgcolor: isLoad ? "#10B981" : "#EF4444",
+            flex: { xs: 2, sm: "none" },
+            bgcolor: accent,
             "&:hover": {
-              bgcolor: isLoad ? "#059669" : "#DC2626",
+              bgcolor: accentDark,
             },
             "&.Mui-disabled": {
-              bgcolor: isLoad ? alpha("#10B981", 0.5) : alpha("#EF4444", 0.5),
+              bgcolor: alpha(accent, 0.5),
               color: "#FFFFFF",
             },
           }}

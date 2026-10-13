@@ -23,6 +23,8 @@ import AssessmentIcon from "@mui/icons-material/Assessment";
 import LogoutIcon from "@mui/icons-material/Logout";
 import MenuIcon from "@mui/icons-material/Menu";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
+import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
+import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
@@ -84,6 +86,16 @@ export default function DashboardLayout({ children }: Props) {
       text: "Production",
       icon: <AssessmentIcon sx={{ fontSize: 20 }} />,
       path: "/dashboard/production",
+    },
+    {
+      text: "Sales",
+      icon: <LocalShippingOutlinedIcon sx={{ fontSize: 20 }} />,
+      path: "/dashboard/sales",
+    },
+    {
+      text: "Edit History",
+      icon: <HistoryOutlinedIcon sx={{ fontSize: 20 }} />,
+      path: "/dashboard/history",
     },
   ];
 

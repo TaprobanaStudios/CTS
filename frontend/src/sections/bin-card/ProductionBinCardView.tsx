@@ -25,17 +25,14 @@ import ProductionBinCardDetailView, {
   ProductionLedgerRow,
   ProductItem,
 } from "./ProductionBinCardDetailView";
-
-export interface MaterialUsageDto {
-  itemId: string;
-  itemName: string;
-  amount: number;
-}
-
-export interface ProductUsageDto {
-  productName: string;
-  amount: number;
-}
+import {
+  MaterialUsageDto,
+  ProductSale,
+  ProductUsageDto,
+  formatMoney,
+  formatQty,
+} from "../production/types";
+import { currentMonthInSriLanka } from "@/utils/datetime";
 
 export type ProductionStatusType =
   | "STORED"
@@ -54,10 +51,15 @@ export interface ProductionReport {
   status?: ProductionStatusType;
   materials?: MaterialUsageDto[];
   productUsages?: ProductUsageDto[];
+  editedBy?: string | null;
+  editedAt?: string | null;
+  editCount?: number | null;
+  editNote?: string | null;
 }
 
 export default function ProductionBinCardView() {
   const [reports, setReports] = useState<ProductionReport[]>([]);
+  const [sales, setSales] = useState<ProductSale[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Navigation state: null => Grid Overview; string => Detail View
@@ -69,14 +71,18 @@ export default function ProductionBinCardView() {
   const [gridSearchQuery, setGridSearchQuery] = useState("");
   const [gridPage, setGridPage] = useState(1);
 
-  // Fetch production items
+  // Fetch production items and the sales that took products back out of stock
   const fetchReports = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/production/items");
-      if (!res.ok) throw new Error("Failed to fetch production items");
+      const [res, salesRes] = await Promise.all([
+        fetch("/api/production/items"),
+        fetch("/api/sales"),
+      ]);
+      if (!res.ok || !salesRes.ok) throw new Error("Failed to fetch production items");
       const data = await res.json();
       setReports(Array.isArray(data) ? data : data.content || []);
+      setSales(await salesRes.json());
     } catch (err) {
       console.error("Failed to load production reports:", err);
     } finally {
@@ -89,48 +95,54 @@ export default function ProductionBinCardView() {
   }, []);
 
   // Compute distinct products list dynamically from production items & consumptions
+  // The month the cards' figures cover; the balance itself is all-time
+  const month = useMemo(() => currentMonthInSriLanka(), []);
+
   const products: ProductItem[] = useMemo(() => {
-    const productMap = new Map<
-      string,
-      { produced: number; damages: number; used: number }
-    >();
+    interface Totals {
+      produced: number;
+      damages: number;
+      used: number;
+      sold: number;
+    }
+    const empty = (): Totals => ({ produced: 0, damages: 0, used: 0, sold: 0 });
+    // Per product: all-time totals (they make up the balance) and this month's alone
+    const productMap = new Map<string, { all: Totals; month: Totals }>();
+    const add = (name: string, date: string, field: keyof Totals, quantity: number) => {
+      const entry = productMap.get(name) ?? { all: empty(), month: empty() };
+      entry.all[field] += quantity;
+      if (date.startsWith(month.prefix)) entry.month[field] += quantity;
+      productMap.set(name, entry);
+    };
 
     reports.forEach((rep) => {
       const pName = rep.productType?.trim();
       if (pName) {
-        const existing = productMap.get(pName) || {
-          produced: 0,
-          damages: 0,
-          used: 0,
-        };
-        existing.produced += Number(rep.qtyProduced) || 0;
-        existing.damages += Number(rep.damages) || 0;
-        productMap.set(pName, existing);
+        add(pName, rep.reportDate, "produced", Number(rep.qtyProduced) || 0);
+        add(pName, rep.reportDate, "damages", Number(rep.damages) || 0);
       }
 
-      // Check if manufactured items were used as components in this report
-      if (rep.productUsages && Array.isArray(rep.productUsages)) {
-        rep.productUsages.forEach((pu) => {
-          const uName = pu.productName?.trim();
-          if (!uName) return;
-          const existing = productMap.get(uName) || {
-            produced: 0,
-            damages: 0,
-            used: 0,
-          };
-          existing.used += Number(pu.amount) || 0;
-          productMap.set(uName, existing);
-        });
-      }
+      // Manufactured items used as components in this report
+      rep.productUsages?.forEach((pu) => {
+        const uName = pu.productName?.trim();
+        if (uName) add(uName, rep.reportDate, "used", Number(pu.amount) || 0);
+      });
     });
 
-    return Array.from(productMap.entries()).map(([name, stats]) => ({
+    sales.forEach((sale) => add(sale.productName, sale.saleDate, "sold", Number(sale.quantity) || 0));
+
+    return Array.from(productMap.entries()).map(([name, totals]) => ({
       productId: name.toLowerCase().replace(/[^a-z0-9]/g, "-"),
       productName: name,
       unitOfMeasure: "PCS",
-      currentStock: Math.max(0, stats.produced - stats.damages - stats.used),
+      currentStock: Math.max(0, totals.all.produced - totals.all.damages - totals.all.used - totals.all.sold),
+      produced: totals.all.produced,
+      damages: totals.all.damages,
+      used: totals.all.used,
+      sold: totals.all.sold,
+      thisMonth: totals.month,
     }));
-  }, [reports]);
+  }, [reports, sales, month.prefix]);
 
   // Active product when viewing details
   const activeProduct = useMemo(() => {
@@ -142,6 +154,13 @@ export default function ProductionBinCardView() {
   const ledgerRows: ProductionLedgerRow[] = useMemo(() => {
     interface RawMovement {
       id: string;
+      // The production entry or sale behind the movement, for editing it
+      sourceId?: string;
+      unitPrice?: number;
+      editedBy?: string | null;
+      editedAt?: string | null;
+      editCount?: number | null;
+      editNote?: string | null;
       date: string;
       productName: string;
       qtyIn: number;
@@ -150,20 +169,31 @@ export default function ProductionBinCardView() {
       status: ProductionStatusType;
       materials?: MaterialUsageDto[];
       productUsages?: ProductUsageDto[];
+      materialCost: number | null;
+      materialCostPartial: boolean;
       workerName?: string;
       remarks: string;
-      type: "PRODUCTION" | "CONSUMPTION";
+      type: "PRODUCTION" | "CONSUMPTION" | "SALE";
     }
 
     const movements: RawMovement[] = [];
 
-    reports.forEach((rep) => {
+    // Both lists arrive newest first; walk them oldest first so entries of the same
+    // day keep the order they were recorded in
+    [...reports].reverse().forEach((rep) => {
       // 1. Production output movement
       if (rep.productType) {
         const inQty = Number(rep.qtyProduced) || 0;
         const damageQty = Number(rep.damages) || 0;
+        const materials = rep.materials ?? [];
+        const costed = materials.filter((m) => m.unitCost != null);
         movements.push({
           id: `prod-${rep.id}`,
+          sourceId: rep.id,
+          editedBy: rep.editedBy,
+          editedAt: rep.editedAt,
+          editCount: rep.editCount,
+          editNote: rep.editNote,
           date: rep.reportDate,
           productName: rep.productType,
           qtyIn: inQty,
@@ -172,6 +202,11 @@ export default function ProductionBinCardView() {
           status: rep.status || "STORED",
           materials: rep.materials,
           productUsages: rep.productUsages,
+          materialCost:
+            costed.length > 0
+              ? costed.reduce((sum, m) => sum + Number(m.amount) * Number(m.unitCost), 0)
+              : null,
+          materialCostPartial: costed.length > 0 && costed.length < materials.length,
           workerName: rep.workerName,
           remarks:
             damageQty > 0
@@ -197,12 +232,39 @@ export default function ProductionBinCardView() {
             qtyOut: amt,
             damage: 0,
             status: "CONSUMED",
+            materialCost: null,
+            materialCostPartial: false,
             workerName: rep.workerName,
-            remarks: `Consumed as input to produce ${rep.productType}`,
+            remarks: `Used to produce ${rep.productType}`,
             type: "CONSUMPTION",
           });
         });
       }
+    });
+
+    // 3. Sales
+    [...sales].reverse().forEach((sale) => {
+      movements.push({
+        id: `sale-${sale.id}`,
+        sourceId: sale.id,
+        unitPrice: Number(sale.unitPrice),
+        editedBy: sale.editedBy,
+        editedAt: sale.editedAt,
+        editCount: sale.editCount,
+        editNote: sale.editNote,
+        date: sale.saleDate,
+        productName: sale.productName,
+        qtyIn: 0,
+        qtyOut: Number(sale.quantity) || 0,
+        damage: 0,
+        status: "SOLD",
+        materialCost: null,
+        materialCostPartial: false,
+        remarks: `Sold at ${formatMoney(Number(sale.unitPrice))} per piece · ${formatMoney(
+          Number(sale.unitPrice) * Number(sale.quantity),
+        )} total`,
+        type: "SALE",
+      });
     });
 
     // Chronological sort
@@ -228,13 +290,14 @@ export default function ProductionBinCardView() {
 
       rows.push({
         ...m,
+        seq: rows.length,
         openingStock: prev,
         closingStock: closing,
       });
     });
 
     return rows;
-  }, [reports, activeProduct]);
+  }, [reports, sales, activeProduct]);
 
   // Filtered products for Grid Overview
   const filteredGridProducts = useMemo(() => {
@@ -413,7 +476,7 @@ export default function ProductionBinCardView() {
                     md: "repeat(3, 1fr)",
                     lg: "repeat(4, 1fr)",
                   },
-                  gridAutoRows: "minmax(220px, auto)",
+                  gridAutoRows: "minmax(280px, auto)",
                   alignContent: "start",
                   minHeight: { xs: "auto", sm: 460 },
                   gap: 2,
@@ -658,7 +721,7 @@ export default function ProductionBinCardView() {
                               letterSpacing: "0.03em",
                             }}
                           >
-                            Current Bin Balance
+                            Stock on hand now
                           </Typography>
                           <Typography
                             sx={{
@@ -669,7 +732,7 @@ export default function ProductionBinCardView() {
                               lineHeight: 1.2,
                             }}
                           >
-                            {prod.currentStock}{" "}
+                            {formatQty(prod.currentStock)}{" "}
                             <Typography
                               component="span"
                               sx={{
@@ -681,6 +744,53 @@ export default function ProductionBinCardView() {
                               {prod.unitOfMeasure}
                             </Typography>
                           </Typography>
+                        </Box>
+
+                        {/* What moved this month; the balance above is the all-time stock on hand */}
+                        <Typography
+                          sx={{
+                            fontSize: "0.62rem",
+                            fontWeight: 700,
+                            color: "#64748B",
+                            textTransform: "uppercase",
+                            letterSpacing: "0.04em",
+                            mb: 0.5,
+                          }}
+                        >
+                          This month · {month.label}
+                        </Typography>
+                        <Box
+                          sx={{
+                            display: "grid",
+                            // The two longer labels get the wider columns
+                            gridTemplateColumns: "minmax(0, 1.25fr) minmax(0, 1.25fr) minmax(0, 0.75fr) minmax(0, 0.75fr)",
+                            gap: 1,
+                            mb: 1.5,
+                          }}
+                        >
+                          {[
+                            { label: "Produced", value: prod.thisMonth.produced, color: prod.thisMonth.produced > 0 ? "#059669" : "#64748B" },
+                            { label: "Damaged", value: prod.thisMonth.damages, color: prod.thisMonth.damages > 0 ? "#DC2626" : "#64748B" },
+                            { label: "Used", value: prod.thisMonth.used, color: "#64748B" },
+                            { label: "Sold", value: prod.thisMonth.sold, color: prod.thisMonth.sold > 0 ? "#2563EB" : "#64748B" },
+                          ].map((stat) => (
+                            <Box key={stat.label} sx={{ minWidth: 0 }}>
+                              <Typography
+                                sx={{
+                                  fontSize: "0.56rem",
+                                  fontWeight: 600,
+                                  color: "#94A3B8",
+                                  textTransform: "uppercase",
+                                  letterSpacing: "0.02em",
+                                }}
+                              >
+                                {stat.label}
+                              </Typography>
+                              <Typography sx={{ fontSize: "0.82rem", fontWeight: 700, color: stat.color }}>
+                                {formatQty(stat.value)}
+                              </Typography>
+                            </Box>
+                          ))}
                         </Box>
                       </Box>
 

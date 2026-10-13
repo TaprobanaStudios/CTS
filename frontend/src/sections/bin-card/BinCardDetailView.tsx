@@ -1,23 +1,11 @@
 import * as React from "react";
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Box,
   Typography,
-  TextField,
   Button,
   IconButton,
   Tooltip,
-  InputAdornment,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  TablePagination,
-  TableSortLabel,
-  CircularProgress,
-  Avatar,
   Tab,
   Tabs,
   Paper,
@@ -28,6 +16,16 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import RemoveIcon from "@mui/icons-material/Remove";
 import SearchBar from "../../components/search/SearchBar";
+import CustomTable, {
+  CustomTableColumn,
+  CustomTableSort,
+} from "@/components/table/CustomTable";
+import useDebouncedValue from "@/hooks/useDebouncedValue";
+import EditRecordDialog, { EditRecordField } from "@/components/dialog/EditRecordDialog";
+import EditedNote from "@/components/table/EditedNote";
+import { formatDate } from "@/utils/datetime";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import TrendingDownIcon from "@mui/icons-material/TrendingDown";
@@ -37,169 +35,538 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorIcon from "@mui/icons-material/Error";
 import FactoryOutlinedIcon from "@mui/icons-material/FactoryOutlined";
 import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
-import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
-import CloseIcon from "@mui/icons-material/Close";
 import { Item, InventoryLog } from "./BinCardView";
 
 interface BinCardDetailViewProps {
   selectedItemId: string;
   activeItem: Item | null;
-  logs: InventoryLog[];
-  loading: boolean;
+  /** Bumped by the parent to re-run the current query (e.g. after a transaction) */
+  reloadToken: number;
   onBack: () => void;
-  onRefresh: () => void;
   onTransaction: (type: "load" | "deduct", itemId: string) => void;
+  onError: (message: string) => void;
+  /** An entry was edited: stock figures held by the parent are out of date */
+  onChanged: () => void;
 }
+
+type MovementTab = "all" | "in" | "out";
+
+interface LedgerPage {
+  key: string;
+  rows: InventoryLog[];
+  total: number;
+}
+
+// Latest transactions first
+const DEFAULT_SORT: CustomTableSort = { field: "transactionDate", direction: "desc" };
+const DEFAULT_ROWS_PER_PAGE = 10;
+const SEARCH_DEBOUNCE_MS = 350;
+
+const getRemarkBadge = (remarks: string) => {
+  if (!remarks) return null;
+  const isProduction = remarks.toLowerCase().includes("production");
+  const isSupplier =
+    remarks.toLowerCase().includes("supplier") ||
+    remarks.toLowerCase().includes("delivery");
+
+  if (isProduction) {
+    return (
+      <Chip
+        icon={<FactoryOutlinedIcon style={{ fontSize: 13 }} />}
+        label="Production"
+        size="small"
+        sx={{
+          height: 20,
+          fontSize: "0.7rem",
+          fontWeight: 600,
+          bgcolor: "#EEF2FF",
+          color: "#4F46E5",
+          border: "1px solid rgba(99, 102, 241, 0.2)",
+          mr: 1,
+        }}
+      />
+    );
+  }
+
+  if (isSupplier) {
+    return (
+      <Chip
+        icon={<LocalShippingOutlinedIcon style={{ fontSize: 13 }} />}
+        label="Inbound"
+        size="small"
+        sx={{
+          height: 20,
+          fontSize: "0.7rem",
+          fontWeight: 600,
+          bgcolor: "#ECFDF5",
+          color: "#059669",
+          border: "1px solid rgba(16, 185, 129, 0.2)",
+          mr: 1,
+        }}
+      />
+    );
+  }
+
+  return null;
+};
+
+const emptyDash = (
+  <Typography variant="body2" sx={{ color: "#94A3B8" }}>
+    -
+  </Typography>
+);
 
 export default function BinCardDetailView({
   selectedItemId,
   activeItem,
-  logs,
-  loading,
+  reloadToken,
   onBack,
-  onRefresh,
   onTransaction,
+  onError,
+  onChanged,
 }: BinCardDetailViewProps) {
-  // Detail view search & filters
   const isAllMaterials = selectedItemId === "all";
-  const [detailSearchQuery, setDetailSearchQuery] = useState("");
-  const [movementTab, setMovementTab] = useState<"all" | "in" | "out">("all");
 
-  // Table pagination & sorting
+  const [ledger, setLedger] = useState<LedgerPage>({ key: "", rows: [], total: 0 });
+  const [detailSearchQuery, setDetailSearchQuery] = useState("");
+  const [movementTab, setMovementTab] = useState<MovementTab>("all");
   const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
-  const [order, setOrder] = useState<"asc" | "desc">("desc");
-  const [orderBy, setOrderBy] = useState<string>("transactionDate");
+  const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
+  const [sort, setSort] = useState<CustomTableSort>(DEFAULT_SORT);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [editingLog, setEditingLog] = useState<InventoryLog | null>(null);
+
+  const debouncedSearch = useDebouncedValue(detailSearchQuery, SEARCH_DEBOUNCE_MS);
+
+  const query = useMemo(() => {
+    const params = new URLSearchParams({
+      page: String(page),
+      size: String(rowsPerPage),
+      sort: `${sort.field},${sort.direction}`,
+    });
+    if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+    if (movementTab !== "all") params.set("movement", movementTab.toUpperCase());
+    return params.toString();
+  }, [page, rowsPerPage, sort, debouncedSearch, movementTab]);
+
+  const requestKey = `${selectedItemId}?${query}#${reloadToken}.${refreshToken}`;
+  // Loading is derived: the page on screen belongs to an older request
+  const loading = ledger.key !== requestKey;
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetch(`/api/inventory/bin/${selectedItemId}?${query}`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch bin logs");
+        return res.json();
+      })
+      .then((data) => {
+        const rows: InventoryLog[] = data.content ?? [];
+        const total: number = data.totalElements ?? 0;
+        const lastPage = Math.max(0, (data.totalPages ?? 1) - 1);
+        setLedger({ key: requestKey, rows, total });
+        // The result set shrank underneath us: step back to the last page that exists
+        if (rows.length === 0 && total > 0) setPage((prev) => Math.min(prev, lastPage));
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        onError(err instanceof Error ? err.message : "Failed to fetch bin logs");
+        setLedger((prev) => ({ ...prev, key: requestKey }));
+      });
+
+    return () => controller.abort();
+    // onError is a fresh closure on every parent render and must not retrigger the fetch
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItemId, query, requestKey]);
+
+  const logs = ledger.rows;
 
   // Item fallback helpers
-  const currentItemName =
-    activeItem?.itemName ||
-    (logs.length > 0 && logs[0]?.item?.name ? logs[0].item.name : isAllMaterials ? "All Materials Combined Ledger" : "Material Ledger");
+  const currentItemName = isAllMaterials
+    ? "All Materials Combined Ledger"
+    : activeItem?.itemName || logs[0]?.item?.name || "Material Ledger";
   const currentItemSku =
     activeItem?.itemId ||
     (logs.length > 0 && logs[0]?.item?.id ? logs[0].item.id : selectedItemId);
   const currentItemUnit =
     activeItem?.unitOfMeasure ||
     (logs.length > 0 && logs[0]?.item?.unitOfMeasure ? logs[0].item.unitOfMeasure : "UNITS");
+  const currentStock = activeItem?.currentStock ?? 0;
 
-  // KPI Metrics calculation for Detail View
-  const metrics = useMemo(() => {
-    const totalRecords = logs.length;
-    let totalIn = 0;
-    let totalOut = 0;
+  const hasActiveFilters = detailSearchQuery !== "" || movementTab !== "all";
 
-    logs.forEach((log) => {
-      totalIn += Number(log.qtyIn || 0);
-      totalOut += Number(log.qtyOut || 0);
+  const columns: CustomTableColumn[] = [
+    {
+      field: "transactionDate",
+      headerName: "Date",
+      minWidth: 105,
+      renderCell: (params) => (
+        <Typography
+          sx={{
+            fontSize: "0.875rem",
+            color: "#0F172A",
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {formatDate(params.value)}
+        </Typography>
+      ),
+    },
+    // Item Name (Only in Combined Ledger)
+    ...(isAllMaterials
+      ? [
+          {
+            field: "item",
+            headerName: "Item",
+            minWidth: 110,
+            sortable: false,
+            renderCell: (params) => (
+              <Typography variant="body2" sx={{ fontWeight: 600, color: "#1E293B" }}>
+                {params.value?.name || "-"}
+              </Typography>
+            ),
+          } satisfies CustomTableColumn,
+        ]
+      : []),
+    {
+      // Stock ID with its buying cost underneath
+      field: "batchCode",
+      headerName: "Stock",
+      minWidth: 130,
+      sortable: false,
+      renderCell: (params) =>
+        params.value ? (
+          <Box>
+            <Typography
+              variant="body2"
+              sx={{ color: "#334155", fontWeight: 600, whiteSpace: "nowrap", fontSize: "0.8rem" }}
+            >
+              {params.value}
+            </Typography>
+            {params.row.unitCost != null && (
+              <Typography sx={{ color: "#64748B", fontSize: "0.72rem", whiteSpace: "nowrap" }}>
+                Rs.{" "}
+                {Number(params.row.unitCost).toLocaleString("en-US", {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}{" "}
+                / unit
+              </Typography>
+            )}
+          </Box>
+        ) : (
+          emptyDash
+        ),
+    },
+    {
+      field: "openingStock",
+      headerName: "O/S",
+      minWidth: 70,
+      align: "right",
+      sortable: false,
+      renderCell: (params) => (
+        <Typography
+          variant="body2"
+          sx={{ color: "#64748B", fontWeight: 500, fontVariantNumeric: "tabular-nums" }}
+        >
+          {params.value != null ? params.value : "-"}
+        </Typography>
+      ),
+    },
+    {
+      // Stock in (+) or out (-); an entry is always one or the other
+      field: "qtyIn",
+      headerName: "Movement",
+      minWidth: 95,
+      sortable: false,
+      renderCell: (params) => {
+        const isInflow = Number(params.row.qtyIn) > 0;
+        const isOutflow = Number(params.row.qtyOut) > 0;
+        if (!isInflow && !isOutflow) return emptyDash;
+        return (
+          <Chip
+            icon={
+              isInflow ? (
+                <TrendingUpIcon style={{ color: "#059669", fontSize: 15 }} />
+              ) : (
+                <TrendingDownIcon style={{ color: "#DC2626", fontSize: 15 }} />
+              )
+            }
+            label={isInflow ? `+${params.row.qtyIn}` : `-${params.row.qtyOut}`}
+            size="small"
+            sx={{
+              bgcolor: isInflow ? "#ECFDF5" : "#FEF2F2",
+              color: isInflow ? "#059669" : "#DC2626",
+              fontWeight: 700,
+              fontSize: "0.8rem",
+              border: isInflow
+                ? "1px solid rgba(16, 185, 129, 0.2)"
+                : "1px solid rgba(239, 68, 68, 0.2)",
+              height: 24,
+            }}
+          />
+        );
+      },
+    },
+    {
+      field: "closingStock",
+      headerName: "Balance",
+      minWidth: 90,
+      align: "right",
+      sortable: false,
+      renderCell: (params) => (
+        <Typography
+          variant="body2"
+          sx={{
+            fontWeight: 800,
+            color: "#0F172A",
+            fontSize: "0.9rem",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {params.value != null ? params.value : "-"}
+        </Typography>
+      ),
+    },
+    {
+      field: "authorizedBy",
+      headerName: "Authorized By",
+      minWidth: 100,
+      sortable: false,
+      renderCell: (params) => (
+        <Typography
+          variant="body2"
+          sx={{ color: "#334155", fontWeight: 600, whiteSpace: "nowrap" }}
+        >
+          {params.value || "System"}
+        </Typography>
+      ),
+    },
+    {
+      field: "remarks",
+      headerName: "Remarks / Reference",
+      minWidth: 120,
+      sortable: false,
+      renderCell: (params) => (
+        <Box>
+          <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+            {getRemarkBadge(params.value)}
+            <Typography variant="body2" sx={{ color: "#475569", fontSize: "0.85rem" }}>
+              {params.value}
+            </Typography>
+          </Box>
+          {/* Shown once someone has corrected the entry */}
+          <EditedNote
+            editedBy={params.row.editedBy}
+            editedAt={params.row.editedAt}
+            editCount={params.row.editCount}
+            editNote={params.row.editNote}
+          />
+        </Box>
+      ),
+    },
+    {
+      field: "actions",
+      headerName: "Edit",
+      width: 64,
+      minWidth: 64,
+      align: "center",
+      sortable: false,
+      mobileSlot: "footer",
+      renderCell: (params) =>
+        // Deductions made automatically by a production entry are locked
+        params.row.productionDeduction ? (
+          <Tooltip title="Added automatically by a production entry; it cannot be edited">
+            <LockOutlinedIcon aria-label="Locked entry" sx={{ fontSize: 16, color: "#CBD5E1", display: "block", mx: "auto" }} />
+          </Tooltip>
+        ) : (
+          <Tooltip title="Edit this entry">
+            <IconButton
+              size="small"
+              aria-label="Edit entry"
+              onClick={() => setEditingLog(params.row as InventoryLog)}
+              sx={{ color: "#64748B", "&:hover": { color: "#2563EB", bgcolor: "#EFF6FF" } }}
+            >
+              <EditOutlinedIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+          </Tooltip>
+        ),
+    },
+  ];
+
+  // What can be corrected depends on the kind of entry
+  const editingIsLoad = Number(editingLog?.qtyIn) > 0;
+  const editingUnit = editingLog?.item?.unitOfMeasure || currentItemUnit;
+  const editFields: EditRecordField[] = editingLog
+    ? [
+        { name: "transactionDate", label: "Date", type: "date", required: true, half: true },
+        {
+          name: "quantity",
+          label: editingIsLoad ? "Quantity loaded" : "Quantity deducted",
+          type: "number",
+          required: true,
+          half: true,
+          endAdornment: editingUnit,
+        },
+        ...(editingIsLoad
+          ? [
+              {
+                name: "unitCost",
+                label: "Unit Cost (optional)",
+                type: "number",
+                startAdornment: "Rs.",
+                helperText: "Also applied to what was already taken from this stock",
+              } satisfies EditRecordField,
+            ]
+          : []),
+        { name: "authorizedBy", label: "Authorized By", type: "text", required: true },
+        { name: "remarks", label: "Remarks / Reference Note", type: "multiline" },
+      ]
+    : [];
+
+  const saveEditedLog = async (values: Record<string, string>) => {
+    if (!editingLog) return;
+    const res = await fetch(`/api/inventory/bin/${editingLog.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        transactionDate: values.transactionDate,
+        quantity: Number(values.quantity),
+        unitCost: values.unitCost?.trim() ? Number(values.unitCost) : null,
+        authorizedBy: values.authorizedBy.trim(),
+        remarks: values.remarks,
+        editedBy: values.editedBy.trim(),
+        editRemark: values.editRemark,
+      }),
     });
-
-    const currentStock = activeItem
-      ? (activeItem.currentStock ?? 0)
-      : logs.length > 0
-        ? (logs[0].closingStock ?? 0)
-        : 0;
-
-    return {
-      currentStock,
-      totalIn,
-      totalOut,
-      totalRecords,
-      unit: currentItemUnit,
-    };
-  }, [logs, activeItem, currentItemUnit]);
-
-  // Filtered & sorted logs for Detail Table
-  const filteredLogs = useMemo(() => {
-    return logs
-      .filter((log) => {
-        if (movementTab === "in" && (!log.qtyIn || log.qtyIn <= 0))
-          return false;
-        if (movementTab === "out" && (!log.qtyOut || log.qtyOut <= 0))
-          return false;
-
-        if (detailSearchQuery.trim()) {
-          const q = detailSearchQuery.toLowerCase();
-          const matchesRemarks = (log.remarks || "").toLowerCase().includes(q);
-          const matchesAuth = (log.authorizedBy || "")
-            .toLowerCase()
-            .includes(q);
-          const matchesItem = (log.item?.name || "").toLowerCase().includes(q);
-          if (!matchesRemarks && !matchesAuth && !matchesItem) return false;
-        }
-
-        return true;
-      })
-      .sort((a, b) => {
-        let valA: any = a[orderBy as keyof InventoryLog];
-        let valB: any = b[orderBy as keyof InventoryLog];
-
-        if (orderBy === "transactionDate") {
-          valA = new Date(a.transactionDate).getTime();
-          valB = new Date(b.transactionDate).getTime();
-        }
-
-        if (valA < valB) return order === "asc" ? -1 : 1;
-        if (valA > valB) return order === "asc" ? 1 : -1;
-        return 0;
-      });
-  }, [logs, movementTab, detailSearchQuery, order, orderBy]);
-
-  const handleRequestSort = (property: string) => {
-    const isAsc = orderBy === property && order === "asc";
-    setOrder(isAsc ? "desc" : "asc");
-    setOrderBy(property);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.message || "Failed to save the change");
+    }
+    setRefreshToken((token) => token + 1);
+    onChanged();
   };
 
-  const getRemarkBadge = (remarks: string) => {
-    if (!remarks) return null;
-    const isProduction = remarks.toLowerCase().includes("production");
-    const isSupplier =
-      remarks.toLowerCase().includes("supplier") ||
-      remarks.toLowerCase().includes("delivery");
-
-    if (isProduction) {
-      return (
-        <Chip
-          icon={<FactoryOutlinedIcon style={{ fontSize: 13 }} />}
-          label="Production"
-          size="small"
-          sx={{
-            height: 20,
-            fontSize: "0.7rem",
+  const ledgerToolbar = (
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: { xs: "column", sm: "row" },
+        justifyContent: "space-between",
+        alignItems: { xs: "stretch", sm: "center" },
+        gap: 1.5,
+      }}
+    >
+      {/* Movement Tabs */}
+      <Tabs
+        value={movementTab}
+        onChange={(_, val) => {
+          setMovementTab(val);
+          setPage(0);
+        }}
+        variant="scrollable"
+        scrollButtons={false}
+        sx={{
+          // 32px tabs + 3px padding = 38px, the height of the search box beside it
+          minHeight: 38,
+          bgcolor: "#F1F5F9",
+          borderRadius: "999px",
+          p: "3px",
+          flexShrink: 0,
+          // The chosen filter is a solid blue pill, so it is obvious which one is on
+          "& .MuiTabs-indicator": {
+            bgcolor: "#2563EB",
+            height: "100%",
+            borderRadius: "999px",
+            boxShadow: "0 1px 3px rgba(37, 99, 235, 0.35)",
+            zIndex: 1,
+          },
+          "& .MuiTab-root": {
+            minHeight: 32,
+            py: 0.5,
+            px: { xs: 1.25, sm: 2 },
+            fontSize: "0.85rem",
             fontWeight: 600,
-            bgcolor: "#EEF2FF",
-            color: "#4F46E5",
-            border: "1px solid rgba(99, 102, 241, 0.2)",
-            mr: 1,
-          }}
-        />
-      );
-    }
+            color: "#475569",
+            textTransform: "none",
+            borderRadius: "999px",
+            transition: "color 0.2s ease",
+            zIndex: 2,
+            "&.Mui-selected": { color: "#FFFFFF", fontWeight: 700 },
+          },
+        }}
+      >
+        <Tab label="All Movements" value="all" />
+        <Tab label="Stock In (+)" value="in" />
+        <Tab label="Stock Out (-)" value="out" />
+      </Tabs>
 
-    if (isSupplier) {
-      return (
-        <Chip
-          icon={<LocalShippingOutlinedIcon style={{ fontSize: 13 }} />}
-          label="Inbound"
+      {/* Search Log Records */}
+      <SearchBar
+        value={detailSearchQuery}
+        onChange={(value) => {
+          setDetailSearchQuery(value);
+          setPage(0);
+        }}
+        placeholder="Search remarks, item or authorizer"
+        maxWidth={{ xs: "100%", sm: 320 }}
+      />
+    </Box>
+  );
+
+  const ledgerEmptyState = (
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        textAlign: "center",
+        gap: 1,
+        py: 8,
+        px: 2,
+      }}
+    >
+      <ReceiptLongIcon sx={{ fontSize: 40, color: "#CBD5E1" }} />
+      <Typography variant="subtitle1" sx={{ fontWeight: 700, color: "#334155" }}>
+        No Bin Card Records Found
+      </Typography>
+      <Typography variant="body2" sx={{ color: "#94A3B8", maxWidth: 360 }}>
+        {hasActiveFilters
+          ? "No ledger movements match these filters."
+          : activeItem
+            ? `There are no recorded transactions for ${activeItem.itemName} yet.`
+            : "No inventory movements recorded."}
+      </Typography>
+      {activeItem && !hasActiveFilters && (
+        <Button
+          variant="outlined"
           size="small"
+          startIcon={<AddIcon />}
+          onClick={() => onTransaction("load", selectedItemId)}
           sx={{
-            height: 20,
-            fontSize: "0.7rem",
-            fontWeight: 600,
-            bgcolor: "#ECFDF5",
-            color: "#059669",
-            border: "1px solid rgba(16, 185, 129, 0.2)",
-            mr: 1,
+            mt: 1,
+            borderRadius: "8px",
+            textTransform: "none",
           }}
-        />
-      );
-    }
-
-    return null;
-  };
+        >
+          Load Initial Stock
+        </Button>
+      )}
+    </Box>
+  );
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 2.5,
+        // One screen tall on laptops, so the table scrolls instead of the page
+        height: { md: "calc(100vh - 48px)" },
+      }}
+    >
       {/* Back Navigation Bar */}
       <Box
         sx={{
@@ -235,7 +602,7 @@ export default function BinCardDetailView({
         <Stack direction="row" spacing={1.5}>
           <Tooltip title="Refresh ledger">
             <IconButton
-              onClick={onRefresh}
+              onClick={() => setRefreshToken((token) => token + 1)}
               size="small"
               sx={{
                 bgcolor: "#FFFFFF",
@@ -303,8 +670,8 @@ export default function BinCardDetailView({
       <Paper
         elevation={0}
         sx={{
-          p: 2.5,
-          px: 3,
+          p: { xs: 2, md: 2.5 },
+          px: { xs: 2, md: 3 },
           bgcolor: "#FFFFFF",
           border: "1px solid #E2E8F0",
           borderRadius: "16px",
@@ -312,23 +679,30 @@ export default function BinCardDetailView({
           display: "flex",
           flexDirection: { xs: "column", md: "row" },
           justifyContent: "space-between",
-          alignItems: { xs: "flex-start", md: "center" },
-          gap: 3,
+          alignItems: { xs: "stretch", md: "center" },
+          gap: { xs: 2, md: 3 },
         }}
       >
         {/* Left Side: Material Info */}
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75, minWidth: 0 }}>
+          <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: { xs: 1, md: 2 } }}>
             <Typography
               variant="h4"
-              sx={{ color: "#0F172A", m: 0, lineHeight: 1, fontWeight: 800 }}
+              sx={{
+                color: "#0F172A",
+                m: 0,
+                lineHeight: 1.1,
+                fontWeight: 800,
+                fontSize: { xs: "1.5rem", sm: "2.125rem" },
+                overflowWrap: "anywhere",
+              }}
             >
               {currentItemName}
             </Typography>
             {!isAllMaterials && (
               <Chip
                 icon={
-                  metrics.currentStock > 0 ? (
+                  currentStock > 0 ? (
                     <CheckCircleIcon
                       style={{ color: "#10B981", fontSize: 12 }}
                     />
@@ -336,15 +710,15 @@ export default function BinCardDetailView({
                     <ErrorIcon style={{ color: "#EF4444", fontSize: 12 }} />
                   )
                 }
-                label={metrics.currentStock > 0 ? "In Stock" : "Out of Stock"}
+                label={currentStock > 0 ? "In Stock" : "Out of Stock"}
                 sx={{
-                  bgcolor: metrics.currentStock > 0 ? "#ECFDF5" : "#FEF2F2",
-                  color: metrics.currentStock > 0 ? "#065F46" : "#991B1B",
+                  bgcolor: currentStock > 0 ? "#ECFDF5" : "#FEF2F2",
+                  color: currentStock > 0 ? "#065F46" : "#991B1B",
                   fontWeight: 700,
                   fontSize: "0.65rem",
                   height: 24,
                   border: "1px solid",
-                  borderColor: metrics.currentStock > 0 ? "#A7F3D0" : "#FECACA",
+                  borderColor: currentStock > 0 ? "#A7F3D0" : "#FECACA",
                   boxShadow: "none",
                 }}
               />
@@ -352,7 +726,7 @@ export default function BinCardDetailView({
           </Box>
           <Typography
             variant="body2"
-            sx={{ color: "#64748B", fontSize: "0.85rem" }}
+            sx={{ color: "#64748B", fontSize: "0.85rem", overflowWrap: "anywhere" }}
           >
             {!isAllMaterials
               ? `Material ID: ${currentItemSku}`
@@ -372,6 +746,7 @@ export default function BinCardDetailView({
               borderRadius: "12px",
               border: "1px solid #E2E8F0",
               minWidth: 160,
+              flexShrink: 0,
               boxShadow: "none",
             }}
           >
@@ -393,13 +768,13 @@ export default function BinCardDetailView({
                   variant="h4"
                   sx={{ fontWeight: 800, color: "#0F172A", lineHeight: 1 }}
                 >
-                  {metrics.currentStock}
+                  {currentStock}
                 </Typography>
                 <Typography
                   variant="subtitle2"
                   sx={{ color: "#64748B", fontWeight: 700 }}
                 >
-                  {metrics.unit}
+                  {currentItemUnit}
                 </Typography>
               </Box>
             </Box>
@@ -407,572 +782,54 @@ export default function BinCardDetailView({
         )}
       </Paper>
 
-      {/* Ledger Table Container */}
-      <Paper
-        elevation={0}
+      {/* Ledger Table: takes the rest of the screen on laptops, grows with its cards on mobile */}
+      <Box
         sx={{
-          display: "flex",
-          flexDirection: "column",
-          bgcolor: "#FFFFFF",
-          border: "1px solid #E2E8F0",
-          borderRadius: "16px",
-          overflow: "hidden",
-          boxShadow: "none",
+          flex: { md: "1 1 0" },
+          minHeight: { md: 240 },
         }}
       >
-        {/* Table Toolbar & Filters */}
-        <Box
-          sx={{
-            p: 2,
-            px: 2.5,
-            borderBottom: "1px solid #F1F5F9",
-            display: "flex",
-            flexDirection: { xs: "column", sm: "row" },
-            justifyContent: "space-between",
-            alignItems: { xs: "stretch", sm: "center" },
-            gap: 2,
-          }}
-        >
-          {/* Movement Tabs */}
-          <Tabs
-            value={movementTab}
-            onChange={(_, val) => {
-              setMovementTab(val);
+        <CustomTable
+          rows={logs}
+          columns={columns}
+          loading={loading}
+          toolbar={ledgerToolbar}
+          emptyState={ledgerEmptyState}
+          pagination={{
+            page,
+            rowsPerPage,
+            totalRows: ledger.total,
+            onPageChange: setPage,
+            onRowsPerPageChange: (next) => {
+              setRowsPerPage(next);
               setPage(0);
-            }}
-            sx={{
-              minHeight: 36,
-              bgcolor: "#F8FAFC",
-              borderRadius: "8px",
-              p: 0.5,
-              "& .MuiTabs-indicator": {
-                bgcolor: "#e9e9e9ff",
-                height: "100%",
-                borderRadius: "6px",
-                boxShadow: "0 1px 3px rgba(15, 23, 42, 0.1)",
-                zIndex: 1,
-              },
-              "& .MuiTab-root": {
-                minHeight: 32,
-                py: 0.5,
-                px: 2,
-                fontSize: "0.85rem",
-                fontWeight: 600,
-                color: "#64748B",
-                textTransform: "none",
-                zIndex: 2,
-                "&.Mui-selected": {
-                  color: "#0F172A",
-                  fontWeight: 700,
-                },
-              },
-            }}
-          >
-            <Tab label="All Movements" value="all" />
-            <Tab label="Stock In (+)" value="in" />
-            <Tab label="Stock Out (-)" value="out" />
-          </Tabs>
-
-          {/* Search Log Records */}
-          <SearchBar
-            value={detailSearchQuery}
-            onChange={setDetailSearchQuery}
-            placeholder="Search"
-            maxWidth={{ xs: "100%", sm: 320 }}
-          />
-        </Box>
-
-        {/* The Perpetual Ledger Table */}
-        <TableContainer sx={{ minHeight: 300 }}>
-          <Table
-            stickyHeader
-            aria-label="bin card ledger table"
-            sx={{
-              "& .MuiTableCell-root": {
-                borderRight: "1px solid #dfe2e6ff",
-                borderBottom: "1px solid #dfe2e6ff !important",
-              },
-              "& .MuiTableCell-root:last-child": {
-                borderRight: "none",
-              },
-              "& .MuiTableHead-root .MuiTableCell-root": {
-                borderRight: "1px solid #dfe2e6ff",
-                borderBottom: "1px solid #dfe2e6ff !important",
-                borderTop: "1px solid #dfe2e6ff",
-              },
-              "& .MuiTableHead-root .MuiTableCell-root:last-child": {
-                borderRight: "none",
-              },
-            }}
-          >
-            <TableHead>
-              <TableRow>
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    borderBottom: "1px solid #E2E8F0",
-                    whiteSpace: "nowrap",
-                    py: 1.5,
-                  }}
-                >
-                  <TableSortLabel
-                    active={orderBy === "transactionDate"}
-                    direction={orderBy === "transactionDate" ? order : "asc"}
-                    onClick={() => handleRequestSort("transactionDate")}
-                  >
-                    Date
-                  </TableSortLabel>
-                </TableCell>
-
-                {isAllMaterials && (
-                  <TableCell
-                    align="center"
-                    sx={{
-                      bgcolor: "#F8FAFC",
-                      color: "#475569",
-                      fontWeight: 700,
-                      fontSize: "0.75rem",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
-                      borderBottom: "1px solid #E2E8F0",
-                      whiteSpace: "nowrap",
-                      py: 1.5,
-                    }}
-                  >
-                    Item
-                  </TableCell>
-                )}
-
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    borderBottom: "1px solid #E2E8F0",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  O/S
-                </TableCell>
-
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    borderBottom: "1px solid #E2E8F0",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  In
-                </TableCell>
-
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    borderBottom: "1px solid #E2E8F0",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Out
-                </TableCell>
-
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    borderBottom: "1px solid #E2E8F0",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Closing Balance
-                </TableCell>
-
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    borderBottom: "1px solid #E2E8F0",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Authorized By
-                </TableCell>
-
-                <TableCell
-                  align="center"
-                  sx={{
-                    bgcolor: "#F8FAFC",
-                    color: "#475569",
-                    fontWeight: 700,
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    borderBottom: "1px solid #E2E8F0",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Remarks / Reference
-                </TableCell>
-              </TableRow>
-            </TableHead>
-
-            <TableBody>
-              {loading ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={isAllMaterials ? 8 : 7}
-                    align="center"
-                    sx={{ py: 8 }}
-                  >
-                    <CircularProgress size={30} />
-                    <Typography
-                      variant="body2"
-                      sx={{ mt: 1.5, color: "#64748B" }}
-                    >
-                      Loading ledger transactions...
-                    </Typography>
-                  </TableCell>
-                </TableRow>
-              ) : filteredLogs.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={isAllMaterials ? 8 : 7}
-                    align="center"
-                    sx={{ py: 8 }}
-                  >
-                    <Box
-                      sx={{
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "center",
-                        gap: 1,
-                      }}
-                    >
-                      <ReceiptLongIcon
-                        sx={{ fontSize: 40, color: "#CBD5E1" }}
-                      />
-                      <Typography
-                        variant="subtitle1"
-                        sx={{ fontWeight: 700, color: "#334155" }}
-                      >
-                        No Bin Card Records Found
-                      </Typography>
-                      <Typography
-                        variant="body2"
-                        sx={{ color: "#94A3B8", maxWidth: 360 }}
-                      >
-                        {activeItem
-                          ? `There are no recorded transactions for ${activeItem.itemName} yet.`
-                          : "No inventory movements recorded."}
-                      </Typography>
-                      {activeItem && (
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          startIcon={<AddIcon />}
-                          onClick={() => onTransaction("load", selectedItemId)}
-                          sx={{
-                            mt: 1,
-                            borderRadius: "8px",
-                            textTransform: "none",
-                          }}
-                        >
-                          Load Initial Stock
-                        </Button>
-                      )}
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredLogs
-                  .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
-                  .map((log) => {
-                    const isInflow = Number(log.qtyIn) > 0;
-                    const isOutflow = Number(log.qtyOut) > 0;
-                    const itemName =
-                      log.item?.name || activeItem?.itemName || "-";
-
-                    return (
-                      <TableRow
-                        key={log.id}
-                        hover
-                        sx={{
-                          "&:hover": { bgcolor: "#F8FAFC !important" },
-                          transition: "background-color 0.15s ease",
-                        }}
-                      >
-                        {/* Date */}
-                        <TableCell
-                          align="center"
-                          sx={{
-                            py: 1.8,
-                            borderBottom: "1px solid #F1F5F9",
-                            fontSize: "0.875rem",
-                            color: "#334155",
-                            fontWeight: 500,
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {new Date(log.transactionDate).toLocaleDateString(
-                            "en-US",
-                            {
-                              year: "numeric",
-                              month: "short",
-                              day: "numeric",
-                            },
-                          )}
-                        </TableCell>
-
-                        {/* Item Name (Only in Combined Ledger) */}
-                        {isAllMaterials && (
-                          <TableCell
-                            align="center"
-                            sx={{
-                              py: 1.8,
-                              borderBottom: "1px solid #F1F5F9",
-                              fontSize: "0.875rem",
-                              color: "#1E293B",
-                              fontWeight: 600,
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            <Typography
-                              variant="body2"
-                              sx={{ fontWeight: 600, color: "#1E293B" }}
-                            >
-                              {itemName}
-                            </Typography>
-                          </TableCell>
-                        )}
-
-                        {/* O/S */}
-                        <TableCell
-                          align="right"
-                          sx={{
-                            py: 1.8,
-                            borderBottom: "1px solid #F1F5F9",
-                            fontSize: "0.875rem",
-                            color: "#64748B",
-                            fontWeight: 500,
-                          }}
-                        >
-                          {log.openingStock != null ? log.openingStock : "-"}
-                        </TableCell>
-
-                        {/* In */}
-                        <TableCell
-                          align="center"
-                          sx={{
-                            py: 1.8,
-                            borderBottom: "1px solid #F1F5F9",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {isInflow ? (
-                            <Chip
-                              icon={
-                                <TrendingUpIcon
-                                  style={{ color: "#059669", fontSize: 15 }}
-                                />
-                              }
-                              label={`+${log.qtyIn}`}
-                              size="small"
-                              sx={{
-                                bgcolor: "#ECFDF5",
-                                color: "#059669",
-                                fontWeight: 700,
-                                fontSize: "0.8rem",
-                                border: "1px solid rgba(16, 185, 129, 0.2)",
-                                height: 24,
-                              }}
-                            />
-                          ) : (
-                            <Typography
-                              variant="body2"
-                              sx={{ color: "#94A3B8" }}
-                            >
-                              -
-                            </Typography>
-                          )}
-                        </TableCell>
-
-                        {/* Out */}
-                        <TableCell
-                          align="center"
-                          sx={{
-                            py: 1.8,
-                            borderBottom: "1px solid #F1F5F9",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {isOutflow ? (
-                            <Chip
-                              icon={
-                                <TrendingDownIcon
-                                  style={{ color: "#DC2626", fontSize: 15 }}
-                                />
-                              }
-                              label={`-${log.qtyOut}`}
-                              size="small"
-                              sx={{
-                                bgcolor: "#FEF2F2",
-                                color: "#DC2626",
-                                fontWeight: 700,
-                                fontSize: "0.8rem",
-                                border: "1px solid rgba(239, 68, 68, 0.2)",
-                                height: 24,
-                              }}
-                            />
-                          ) : (
-                            <Typography
-                              variant="body2"
-                              sx={{ color: "#94A3B8" }}
-                            >
-                              -
-                            </Typography>
-                          )}
-                        </TableCell>
-
-                        {/* Closing Balance */}
-                        <TableCell
-                          align="right"
-                          sx={{
-                            py: 1.8,
-                            borderBottom: "1px solid #F1F5F9",
-                          }}
-                        >
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              fontWeight: 800,
-                              color: "#0F172A",
-                              fontSize: "0.9rem",
-                            }}
-                          >
-                            {log.closingStock != null ? log.closingStock : "-"}
-                          </Typography>
-                        </TableCell>
-
-                        {/* Authorized By */}
-                        <TableCell
-                          sx={{
-                            py: 1.8,
-                            borderBottom: "1px solid #F1F5F9",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          <Typography
-                            variant="body2"
-                            sx={{ color: "#334155", fontWeight: 600 }}
-                          >
-                            {log.authorizedBy || "System"}
-                          </Typography>
-                        </TableCell>
-
-                        {/* Remarks */}
-                        <TableCell
-                          sx={{
-                            py: 1.8,
-                            borderBottom: "1px solid #F1F5F9",
-                            minWidth: 220,
-                          }}
-                        >
-                          <Box
-                            sx={{
-                              display: "flex",
-                              alignItems: "center",
-                              flexWrap: "wrap",
-                            }}
-                          >
-                            {getRemarkBadge(log.remarks)}
-                            <Typography
-                              variant="body2"
-                              sx={{
-                                color: "#475569",
-                                fontSize: "0.85rem",
-                              }}
-                            >
-                              {log.remarks}
-                            </Typography>
-                          </Box>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-
-        {/* Pagination Footer */}
-        <Box
-          sx={{
-            p: 1,
-            px: 2,
-            borderTop: "1px solid #F1F5F9",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
+            },
           }}
-        >
-          <Typography variant="caption" sx={{ color: "#94A3B8" }}>
-            Showing {filteredLogs.length} ledger movements
-          </Typography>
+          sort={sort}
+          onSortChange={(next) => {
+            setSort(next);
+            setPage(0);
+          }}
+        />
+      </Box>
 
-          <TablePagination
-            rowsPerPageOptions={[10, 25, 50]}
-            component="div"
-            count={filteredLogs.length}
-            rowsPerPage={rowsPerPage}
-            page={page}
-            onPageChange={(_, newPage) => setPage(newPage)}
-            onRowsPerPageChange={(e) => {
-              setRowsPerPage(parseInt(e.target.value, 10));
-              setPage(0);
-            }}
-            sx={{
-              border: "none",
-              "& .MuiTablePagination-toolbar": { minHeight: 40 },
-              "& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows":
-                {
-                  fontSize: "0.8rem",
-                  color: "#64748B",
-                },
-            }}
-          />
-        </Box>
-      </Paper>
+      {editingLog && (
+        <EditRecordDialog
+          key={editingLog.id}
+          title={editingIsLoad ? "Edit Stock Load" : "Edit Stock Deduction"}
+          subtitle={`${editingLog.item?.name || currentItemName}${editingLog.batchCode ? ` · stock ${editingLog.batchCode}` : ""}`}
+          fields={editFields}
+          initialValues={{
+            transactionDate: editingLog.transactionDate,
+            quantity: String(editingIsLoad ? editingLog.qtyIn : editingLog.qtyOut),
+            unitCost: editingLog.unitCost != null ? String(editingLog.unitCost) : "",
+            authorizedBy: editingLog.authorizedBy || "",
+            remarks: editingLog.remarks || "",
+          }}
+          onClose={() => setEditingLog(null)}
+          onSubmit={saveEditedLog}
+        />
+      )}
     </Box>
   );
 }

@@ -43,4 +43,20 @@ public class ProductionItem extends Auditable<String> {
 
     @Column(name = "damages")
     private Integer damages;
+
+    // Set when a user corrects the entry afterwards; null if it was never edited.
+    // (modifiedAt cannot serve: it also changes on system updates such as stock being drawn down.)
+    @Column(name = "edited_by")
+    private String editedBy;
+
+    @Column(name = "edited_at")
+    private java.time.LocalDateTime editedAt;
+
+    // How many times the entry has been corrected; null if never
+    @Column(name = "edit_count")
+    private Integer editCount;
+
+    // About the latest correction: the reason given, or else what was changed
+    @Column(name = "edit_note", columnDefinition = "TEXT")
+    private String editNote;
 }

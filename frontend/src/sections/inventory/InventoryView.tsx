@@ -27,56 +27,258 @@ import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import FilterAltOffOutlinedIcon from "@mui/icons-material/FilterAltOffOutlined";
 import Link from "next/link";
-import CustomTable, { CustomTableColumn } from "@/components/table/CustomTable";
+import CustomTable, {
+  CustomTableColumn,
+  CustomTableSort,
+} from "@/components/table/CustomTable";
 import SearchBar from "../../components/search/SearchBar";
+import useDebouncedValue from "@/hooks/useDebouncedValue";
+import { formatDateTime } from "@/utils/datetime";
+
+type StockStatus = "HEALTHY" | "LOW" | "DEPLETED";
+type StatusFilter = "ALL" | StockStatus;
 
 interface InventoryItem {
   itemId: string;
   itemName: string;
   unitOfMeasure: string;
   currentStock: number;
+  status: StockStatus;
   updatedAt?: string;
 }
 
-type StockFilterType = "all" | "healthy" | "low" | "depleted";
+interface InventorySummary {
+  total: number;
+  healthy: number;
+  low: number;
+  depleted: number;
+}
 
-// Helper threshold: <= 0 => Depleted, 1..10 => Low Stock, > 10 => Healthy
-const getStockStatus = (stock: number) => {
-  if (stock <= 0) return "depleted";
-  if (stock <= 10) return "low";
-  return "healthy";
+interface InventoryPage {
+  key: string;
+  rows: InventoryItem[];
+  total: number;
+}
+
+// Status is decided by the backend: <= 0 => Depleted, up to 10 => Low Stock, above => Healthy
+const STATUS_META: Record<
+  StockStatus,
+  {
+    label: string;
+    color: string;
+    bg: string;
+    border: string;
+    Icon: typeof CheckCircleOutlineRoundedIcon;
+  }
+> = {
+  HEALTHY: {
+    label: "In Stock",
+    color: "#059669",
+    bg: "#ECFDF5",
+    border: "rgba(16, 185, 129, 0.2)",
+    Icon: CheckCircleOutlineRoundedIcon,
+  },
+  LOW: {
+    label: "Low Stock",
+    color: "#D97706",
+    bg: "#FFFBEB",
+    border: "rgba(217, 119, 6, 0.2)",
+    Icon: WarningAmberRoundedIcon,
+  },
+  DEPLETED: {
+    label: "Out of Stock",
+    color: "#DC2626",
+    bg: "#FEF2F2",
+    border: "rgba(239, 68, 68, 0.2)",
+    Icon: ErrorOutlineRoundedIcon,
+  },
+};
+
+const KPI_CARDS: {
+  filter: StatusFilter;
+  summaryKey: keyof InventorySummary;
+  label: string;
+  color: string;
+  valueColor: string;
+  bg: string;
+  Icon: typeof CheckCircleOutlineRoundedIcon;
+}[] = [
+  {
+    filter: "ALL",
+    summaryKey: "total",
+    label: "Total Items",
+    color: "#2563EB",
+    valueColor: "#0F172A",
+    bg: "#EFF6FF",
+    Icon: Inventory2OutlinedIcon,
+  },
+  {
+    filter: "HEALTHY",
+    summaryKey: "healthy",
+    label: "Healthy Stock",
+    color: STATUS_META.HEALTHY.color,
+    valueColor: STATUS_META.HEALTHY.color,
+    bg: STATUS_META.HEALTHY.bg,
+    Icon: STATUS_META.HEALTHY.Icon,
+  },
+  {
+    filter: "LOW",
+    summaryKey: "low",
+    label: "Low Level Warning",
+    color: STATUS_META.LOW.color,
+    valueColor: STATUS_META.LOW.color,
+    bg: STATUS_META.LOW.bg,
+    Icon: STATUS_META.LOW.Icon,
+  },
+  {
+    filter: "DEPLETED",
+    summaryKey: "depleted",
+    label: "Depleted / Out",
+    color: STATUS_META.DEPLETED.color,
+    valueColor: STATUS_META.DEPLETED.color,
+    bg: STATUS_META.DEPLETED.bg,
+    Icon: STATUS_META.DEPLETED.Icon,
+  },
+];
+
+// Most recently updated items first
+const DEFAULT_SORT: CustomTableSort = { field: "updatedAt", direction: "desc" };
+const DEFAULT_ROWS_PER_PAGE = 10;
+const FILTER_DEBOUNCE_MS = 350;
+
+// Matches the SearchBar so the filter row reads as one control group
+const filterFieldSx = {
+  "& .MuiOutlinedInput-root": {
+    bgcolor: "#FFFFFF",
+    borderRadius: "12px",
+    fontSize: "0.825rem",
+    fontWeight: 500,
+    height: 38,
+    "& fieldset": { borderColor: "#E2E8F0", borderWidth: "1.5px" },
+    "&:hover fieldset": { borderColor: "#93C5FD", borderWidth: "1.5px" },
+    "&.Mui-focused fieldset": { borderColor: "#2563EB", borderWidth: "1.5px" },
+  },
+  "& .MuiOutlinedInput-input": {
+    py: 0,
+    px: 1.5,
+    fontSize: "0.825rem",
+    "&::placeholder": { color: "#94A3B8", opacity: 1, fontWeight: 400 },
+  },
 };
 
 export default function InventoryView() {
-  const [inventory, setInventory] = useState<InventoryItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [inventory, setInventory] = useState<InventoryPage>({
+    key: "",
+    rows: [],
+    total: 0,
+  });
+  const [summary, setSummary] = useState<InventorySummary | null>(null);
   const [error, setError] = useState("");
+
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
+  const [sort, setSort] = useState<CustomTableSort>(DEFAULT_SORT);
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StockFilterType>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  // Bumped to re-run the current query (refresh button, after adding an item)
+  const [reloadToken, setReloadToken] = useState(0);
 
   const [open, setOpen] = useState(false);
   const [newItem, setNewItem] = useState({ name: "", unitOfMeasure: "" });
   const [submitting, setSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
 
-  const fetchInventory = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch("/api/inventory/current");
-      if (!res.ok) throw new Error("Failed to fetch inventory data");
-      const data = await res.json();
-      setInventory(Array.isArray(data) ? data : data.content || []);
-    } catch (err: any) {
-      setError(err.message || "An error occurred");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const debouncedSearch = useDebouncedValue(searchQuery, FILTER_DEBOUNCE_MS);
+
+  const query = useMemo(() => {
+    const params = new URLSearchParams({
+      page: String(page),
+      size: String(rowsPerPage),
+      sort: `${sort.field},${sort.direction}`,
+    });
+    if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+    if (statusFilter !== "ALL") params.set("status", statusFilter);
+    return params.toString();
+  }, [page, rowsPerPage, sort, debouncedSearch, statusFilter]);
+
+  const requestKey = `${query}#${reloadToken}`;
+  // Loading is derived: the page on screen belongs to an older request
+  const loading = inventory.key !== requestKey;
 
   useEffect(() => {
-    fetchInventory();
-  }, []);
+    const controller = new AbortController();
+
+    fetch(`/api/inventory/current?${query}`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch inventory data");
+        return res.json();
+      })
+      .then((data) => {
+        const rows: InventoryItem[] = data.content ?? [];
+        const total: number = data.totalElements ?? 0;
+        const lastPage = Math.max(0, (data.totalPages ?? 1) - 1);
+        setInventory({ key: requestKey, rows, total });
+        // The result set shrank underneath us: step back to the last page that exists
+        if (rows.length === 0 && total > 0) setPage((prev) => Math.min(prev, lastPage));
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : "An error occurred");
+        setInventory((prev) => ({ ...prev, key: requestKey }));
+      });
+
+    return () => controller.abort();
+  }, [query, requestKey]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetch("/api/inventory/summary", { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch inventory summary");
+        return res.json();
+      })
+      .then((data: InventorySummary) => setSummary(data))
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : "An error occurred");
+      });
+
+    return () => controller.abort();
+  }, [reloadToken]);
+
+  const reloadInventory = () => setReloadToken((token) => token + 1);
+
+  // Every filter change starts again from the first page
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    setPage(0);
+  };
+
+  const handleStatusChange = (value: StatusFilter) => {
+    setStatusFilter(value);
+    setPage(0);
+  };
+
+  const handleSortChange = (next: CustomTableSort) => {
+    setSort(next);
+    setPage(0);
+  };
+
+  const handleRowsPerPageChange = (next: number) => {
+    setRowsPerPage(next);
+    setPage(0);
+  };
+
+  const hasActiveFilters = searchQuery !== "" || statusFilter !== "ALL";
+
+  const clearFilters = () => {
+    setSearchQuery("");
+    setStatusFilter("ALL");
+    setPage(0);
+  };
 
   const handleAddItem = async () => {
     if (!newItem.name || !newItem.unitOfMeasure) {
@@ -100,58 +302,21 @@ export default function InventoryView() {
       setSuccessMsg("Item added successfully!");
       setOpen(false);
       setNewItem({ name: "", unitOfMeasure: "" });
-      fetchInventory();
-    } catch (err: any) {
-      setError(err.message);
+      setPage(0);
+      reloadInventory();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add item");
     } finally {
       setSubmitting(false);
     }
   };
-
-  // KPI calculations
-  const stats = useMemo(() => {
-    let healthy = 0;
-    let low = 0;
-    let depleted = 0;
-
-    inventory.forEach((item) => {
-      const st = getStockStatus(Number(item.currentStock));
-      if (st === "healthy") healthy++;
-      else if (st === "low") low++;
-      else depleted++;
-    });
-
-    return {
-      total: inventory.length,
-      healthy,
-      low,
-      depleted,
-    };
-  }, [inventory]);
-
-  // Filtered inventory list
-  const filteredInventory = useMemo(() => {
-    return inventory.filter((item) => {
-      const matchesSearch = item.itemName
-        .toLowerCase()
-        .includes(searchQuery.toLowerCase());
-      if (!matchesSearch) return false;
-
-      const st = getStockStatus(Number(item.currentStock));
-      if (statusFilter === "healthy" && st !== "healthy") return false;
-      if (statusFilter === "low" && st !== "low") return false;
-      if (statusFilter === "depleted" && st !== "depleted") return false;
-
-      return true;
-    });
-  }, [inventory, searchQuery, statusFilter]);
 
   const columns: CustomTableColumn[] = [
     {
       field: "itemName",
       headerName: "Item Name",
       flex: 1.5,
-      minWidth: 220,
+      minWidth: 200,
       renderCell: (params) => (
         <Typography
           sx={{
@@ -170,7 +335,6 @@ export default function InventoryView() {
       headerName: "Unit",
       flex: 0.6,
       minWidth: 100,
-      align: "center",
       renderCell: (params) => (
         <Chip
           label={params.value}
@@ -192,104 +356,46 @@ export default function InventoryView() {
       field: "currentStock",
       headerName: "Current Stock",
       flex: 1,
-      minWidth: 150,
-      align: "center",
-      renderCell: (params) => {
-        const val = Number(params.value);
-        const isDepleted = val <= 0;
-        const isLow = val > 0 && val <= 10;
-        const color = isDepleted ? "#DC2626" : isLow ? "#D97706" : "#16A34A";
-
-        return (
-          <Box
-            sx={{
-              display: "inline-flex",
-              flexDirection: "column",
-              alignItems: "center",
-            }}
-          >
-            <Typography
-              sx={{
-                fontWeight: 800,
-                fontSize: "0.925rem",
-                color,
-                lineHeight: 1.2,
-              }}
-            >
-              {params.value}
-            </Typography>
-          </Box>
-        );
-      },
+      minWidth: 140,
+      align: "right",
+      renderCell: (params) => (
+        <Typography
+          sx={{
+            fontWeight: 800,
+            fontSize: "0.925rem",
+            color: STATUS_META[params.row.status as StockStatus]?.color,
+            lineHeight: 1.2,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {Number(params.value).toLocaleString("en-US", {
+            maximumFractionDigits: 2,
+          })}
+        </Typography>
+      ),
     },
     {
       field: "status",
       headerName: "Status",
       flex: 0.9,
       minWidth: 130,
-      align: "center",
+      sortable: false,
+      mobileSlot: "badge",
       renderCell: (params) => {
-        const st = getStockStatus(Number(params.row.currentStock));
-        if (st === "healthy") {
-          return (
-            <Chip
-              icon={
-                <CheckCircleOutlineRoundedIcon
-                  style={{ fontSize: 14, color: "#059669" }}
-                />
-              }
-              label="In Stock"
-              size="small"
-              sx={{
-                bgcolor: "#ECFDF5",
-                color: "#059669",
-                fontWeight: 700,
-                fontSize: "0.75rem",
-                height: 24,
-                border: "1px solid rgba(16, 185, 129, 0.2)",
-                boxShadow: "none",
-              }}
-            />
-          );
-        }
-        if (st === "low") {
-          return (
-            <Chip
-              icon={
-                <WarningAmberRoundedIcon
-                  style={{ fontSize: 14, color: "#D97706" }}
-                />
-              }
-              label="Low Stock"
-              size="small"
-              sx={{
-                bgcolor: "#FFFBEB",
-                color: "#D97706",
-                fontWeight: 700,
-                fontSize: "0.75rem",
-                height: 24,
-                border: "1px solid rgba(217, 119, 6, 0.2)",
-                boxShadow: "none",
-              }}
-            />
-          );
-        }
+        const meta = STATUS_META[params.value as StockStatus];
+        if (!meta) return <Typography sx={{ color: "#94A3B8" }}>-</Typography>;
         return (
           <Chip
-            icon={
-              <ErrorOutlineRoundedIcon
-                style={{ fontSize: 14, color: "#DC2626" }}
-              />
-            }
-            label="Out of Stock"
+            icon={<meta.Icon style={{ fontSize: 14, color: meta.color }} />}
+            label={meta.label}
             size="small"
             sx={{
-              bgcolor: "#FEF2F2",
-              color: "#DC2626",
+              bgcolor: meta.bg,
+              color: meta.color,
               fontWeight: 700,
               fontSize: "0.75rem",
               height: 24,
-              border: "1px solid rgba(239, 68, 68, 0.2)",
+              border: `1px solid ${meta.border}`,
               boxShadow: "none",
             }}
           />
@@ -300,8 +406,7 @@ export default function InventoryView() {
       field: "updatedAt",
       headerName: "Last Updated",
       flex: 1.2,
-      minWidth: 160,
-      align: "center",
+      minWidth: 170,
       renderCell: (params) => {
         if (!params.value)
           return <Typography sx={{ color: "#94A3B8" }}>-</Typography>;
@@ -309,13 +414,7 @@ export default function InventoryView() {
           <Typography
             sx={{ fontSize: "0.825rem", color: "#64748B", fontWeight: 500 }}
           >
-            {new Date(params.value).toLocaleDateString("en-US", {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
+            {formatDateTime(params.value)}
           </Typography>
         );
       },
@@ -324,8 +423,9 @@ export default function InventoryView() {
       field: "actions",
       headerName: "Bin Card",
       sortable: false,
-      width: 120,
+      width: 110,
       align: "center",
+      mobileSlot: "footer",
       renderCell: (params) => (
         <Tooltip title={`View Bin Card ledger for ${params.row.itemName}`}>
           <Button
@@ -357,12 +457,93 @@ export default function InventoryView() {
     },
   ];
 
+  const filterToolbar = (
+    <Box
+      sx={{
+        display: "grid",
+        gap: 1.25,
+        alignItems: "center",
+        gridTemplateColumns: {
+          xs: "minmax(0, 1fr) 38px",
+          md: "minmax(0, 1fr) 180px 38px",
+        },
+        gridTemplateAreas: {
+          xs: `"search search" "status clear"`,
+          md: `"search status clear"`,
+        },
+      }}
+    >
+      <Box sx={{ gridArea: "search", display: "flex" }}>
+        <SearchBar
+          placeholder="Search by material name..."
+          value={searchQuery}
+          onChange={handleSearchChange}
+          maxWidth="100%"
+        />
+      </Box>
+
+      <TextField
+        select
+        size="small"
+        value={statusFilter}
+        onChange={(e) => handleStatusChange(e.target.value as StatusFilter)}
+        slotProps={{ htmlInput: { "aria-label": "Filter by status" } }}
+        sx={{
+          ...filterFieldSx,
+          gridArea: "status",
+          "& .MuiSelect-select": { display: "flex", alignItems: "center" },
+        }}
+      >
+        <MenuItem value="ALL" sx={{ fontSize: "0.825rem" }}>
+          All statuses
+        </MenuItem>
+        {(Object.keys(STATUS_META) as StockStatus[]).map((status) => (
+          <MenuItem key={status} value={status} sx={{ fontSize: "0.825rem" }}>
+            <Box
+              component="span"
+              sx={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                bgcolor: STATUS_META[status].color,
+                mr: 1,
+                flexShrink: 0,
+              }}
+            />
+            {STATUS_META[status].label}
+          </MenuItem>
+        ))}
+      </TextField>
+
+      <Tooltip title="Clear filters">
+        {/* span keeps the tooltip working while the button is disabled */}
+        <Box component="span" sx={{ gridArea: "clear", display: "flex" }}>
+          <IconButton
+            aria-label="Clear filters"
+            onClick={clearFilters}
+            disabled={!hasActiveFilters}
+            sx={{
+              width: 38,
+              height: 38,
+              border: "1.5px solid #E2E8F0",
+              borderRadius: "12px",
+              color: "#2563EB",
+              "&:hover": { bgcolor: "#EFF6FF", borderColor: "#93C5FD" },
+            }}
+          >
+            <FilterAltOffOutlinedIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Box>
+      </Tooltip>
+    </Box>
+  );
+
   return (
     <Box
       sx={{
         width: "100%",
-        height: "auto",
-        minHeight: "calc(100vh - 100px)",
+        // One screen tall on laptops, so the table scrolls instead of the page
+        height: { xs: "auto", md: "calc(100vh - 48px)" },
         display: "flex",
         flexDirection: "column",
         gap: 2.5,
@@ -372,8 +553,10 @@ export default function InventoryView() {
       <Box
         sx={{
           display: "flex",
+          flexDirection: { xs: "column", sm: "row" },
           justifyContent: "space-between",
-          alignItems: "center",
+          alignItems: { xs: "stretch", sm: "center" },
+          gap: 1.5,
         }}
       >
         <Box>
@@ -383,6 +566,7 @@ export default function InventoryView() {
               color: "#0F172A",
               letterSpacing: "-0.02em",
               lineHeight: 1.2,
+              fontSize: { xs: "1.5rem", sm: "2.125rem" },
             }}
             variant="h4"
           >
@@ -397,15 +581,18 @@ export default function InventoryView() {
           </Typography>
         </Box>
 
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+        <Box
+          sx={{ display: "flex", alignItems: "center", gap: 1.5, flexShrink: 0 }}
+        >
           <Tooltip title="Refresh Inventory">
             <IconButton
-              onClick={fetchInventory}
+              onClick={reloadInventory}
               sx={{
                 bgcolor: "#FFFFFF",
                 border: "1px solid #E2E8F0",
                 borderRadius: "10px",
-                p: 1,
+                width: 40,
+                height: 40,
                 color: "#475569",
                 boxShadow: "none",
                 "&:hover": { bgcolor: "#F8FAFC", color: "#0F172A" },
@@ -426,7 +613,8 @@ export default function InventoryView() {
               fontWeight: 700,
               textTransform: "none",
               px: 2.25,
-              py: 1,
+              height: 40,
+              flexGrow: { xs: 1, sm: 0 },
               boxShadow: "none",
               "&:hover": {
                 bgcolor: "#1D4ED8",
@@ -451,281 +639,104 @@ export default function InventoryView() {
         </Alert>
       </Snackbar>
 
-      {/* KPI Overview Cards */}
-      <Grid container spacing={2}>
-        {/* Total Items */}
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <Card
-            elevation={0}
-            onClick={() => setStatusFilter("all")}
-            sx={{
-              p: 2,
-              borderRadius: "16px",
-              border:
-                statusFilter === "all"
-                  ? "2px solid #2563EB"
-                  : "1px solid #E2E8F0",
-              bgcolor: "#FFFFFF",
-              cursor: "pointer",
-              boxShadow: "none",
-              transition: "border-color 0.15s ease",
-              "&:hover": {
-                borderColor: "#2563EB",
-                boxShadow: "none",
-              },
-            }}
-          >
-            <Box
+      {/* KPI Overview Cards (click to filter by status) */}
+      <Grid container spacing={{ xs: 1.5, md: 2 }}>
+        {KPI_CARDS.map((card) => (
+          <Grid key={card.filter} size={{ xs: 6, md: 3 }}>
+            <Card
+              elevation={0}
+              onClick={() => handleStatusChange(card.filter)}
               sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
+                p: { xs: 1.5, sm: 2 },
+                height: "100%",
+                borderRadius: "16px",
+                border:
+                  statusFilter === card.filter
+                    ? `2px solid ${card.color}`
+                    : "1px solid #E2E8F0",
+                bgcolor: "#FFFFFF",
+                cursor: "pointer",
+                boxShadow: "none",
+                transition: "border-color 0.15s ease",
+                "&:hover": {
+                  borderColor: card.color,
+                  boxShadow: "none",
+                },
               }}
             >
-              <Box>
-                <Typography
-                  variant="caption"
-                  sx={{
-                    color: "#2563EB",
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
-                  }}
-                >
-                  Total Items
-                </Typography>
-                <Typography
-                  variant="h4"
-                  sx={{ fontWeight: 800, color: "#0F172A", mt: 0.5 }}
-                >
-                  {stats.total}
-                </Typography>
-              </Box>
-              <Avatar
+              <Box
                 sx={{
-                  bgcolor: "#EFF6FF",
-                  color: "#2563EB",
-                  width: 42,
-                  height: 42,
-                  borderRadius: "12px",
-                  boxShadow: "none",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
                 }}
               >
-                <Inventory2OutlinedIcon sx={{ fontSize: 22 }} />
-              </Avatar>
-            </Box>
-          </Card>
-        </Grid>
-
-        {/* Healthy Stock */}
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <Card
-            elevation={0}
-            onClick={() => setStatusFilter("healthy")}
-            sx={{
-              p: 2,
-              borderRadius: "16px",
-              border:
-                statusFilter === "healthy"
-                  ? "2px solid #059669"
-                  : "1px solid #E2E8F0",
-              bgcolor: "#FFFFFF",
-              cursor: "pointer",
-              boxShadow: "none",
-              transition: "border-color 0.15s ease",
-              "&:hover": {
-                borderColor: "#059669",
-                boxShadow: "none",
-              },
-            }}
-          >
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-              }}
-            >
-              <Box>
-                <Typography
-                  variant="caption"
+                <Box>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: card.color,
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.04em",
+                    }}
+                  >
+                    {card.label}
+                  </Typography>
+                  <Typography
+                    variant="h4"
+                    sx={{
+                      fontWeight: 800,
+                      color: card.valueColor,
+                      mt: 0.5,
+                      fontSize: { xs: "1.5rem", sm: "2.125rem" },
+                    }}
+                  >
+                    {summary ? summary[card.summaryKey] : "–"}
+                  </Typography>
+                </Box>
+                <Avatar
                   sx={{
-                    color: "#059669",
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
+                    display: { xs: "none", sm: "flex" },
+                    bgcolor: card.bg,
+                    color: card.color,
+                    width: 42,
+                    height: 42,
+                    borderRadius: "12px",
+                    boxShadow: "none",
                   }}
                 >
-                  Healthy Stock
-                </Typography>
-                <Typography
-                  variant="h4"
-                  sx={{ fontWeight: 800, color: "#059669", mt: 0.5 }}
-                >
-                  {stats.healthy}
-                </Typography>
+                  <card.Icon sx={{ fontSize: 22 }} />
+                </Avatar>
               </Box>
-              <Avatar
-                sx={{
-                  bgcolor: "#ECFDF5",
-                  color: "#059669",
-                  width: 42,
-                  height: 42,
-                  borderRadius: "12px",
-                  boxShadow: "none",
-                }}
-              >
-                <CheckCircleOutlineRoundedIcon sx={{ fontSize: 22 }} />
-              </Avatar>
-            </Box>
-          </Card>
-        </Grid>
-
-        {/* Low Stock */}
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <Card
-            elevation={0}
-            onClick={() => setStatusFilter("low")}
-            sx={{
-              p: 2,
-              borderRadius: "16px",
-              border:
-                statusFilter === "low"
-                  ? "2px solid #D97706"
-                  : "1px solid #E2E8F0",
-              bgcolor: "#FFFFFF",
-              cursor: "pointer",
-              boxShadow: "none",
-              transition: "border-color 0.15s ease",
-              "&:hover": {
-                borderColor: "#D97706",
-                boxShadow: "none",
-              },
-            }}
-          >
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-              }}
-            >
-              <Box>
-                <Typography
-                  variant="caption"
-                  sx={{
-                    color: "#D97706",
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
-                  }}
-                >
-                  Low Level Warning
-                </Typography>
-                <Typography
-                  variant="h4"
-                  sx={{ fontWeight: 800, color: "#D97706", mt: 0.5 }}
-                >
-                  {stats.low}
-                </Typography>
-              </Box>
-              <Avatar
-                sx={{
-                  bgcolor: "#FFFBEB",
-                  color: "#D97706",
-                  width: 42,
-                  height: 42,
-                  borderRadius: "12px",
-                  boxShadow: "none",
-                }}
-              >
-                <WarningAmberRoundedIcon sx={{ fontSize: 22 }} />
-              </Avatar>
-            </Box>
-          </Card>
-        </Grid>
-
-        {/* Depleted */}
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <Card
-            elevation={0}
-            onClick={() => setStatusFilter("depleted")}
-            sx={{
-              p: 2,
-              borderRadius: "16px",
-              border:
-                statusFilter === "depleted"
-                  ? "2px solid #DC2626"
-                  : "1px solid #E2E8F0",
-              bgcolor: "#FFFFFF",
-              cursor: "pointer",
-              boxShadow: "none",
-              transition: "border-color 0.15s ease",
-              "&:hover": {
-                borderColor: "#DC2626",
-                boxShadow: "none",
-              },
-            }}
-          >
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-              }}
-            >
-              <Box>
-                <Typography
-                  variant="caption"
-                  sx={{
-                    color: "#DC2626",
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
-                  }}
-                >
-                  Depleted / Out
-                </Typography>
-                <Typography
-                  variant="h4"
-                  sx={{ fontWeight: 800, color: "#DC2626", mt: 0.5 }}
-                >
-                  {stats.depleted}
-                </Typography>
-              </Box>
-              <Avatar
-                sx={{
-                  bgcolor: "#FEF2F2",
-                  color: "#DC2626",
-                  width: 42,
-                  height: 42,
-                  borderRadius: "12px",
-                  boxShadow: "none",
-                }}
-              >
-                <ErrorOutlineRoundedIcon sx={{ fontSize: 22 }} />
-              </Avatar>
-            </Box>
-          </Card>
-        </Grid>
+            </Card>
+          </Grid>
+        ))}
       </Grid>
 
-      {/* Search Bar */}
-      <Box sx={{ width: "100%" }}>
-        <SearchBar
-          placeholder="Search by material name..."
-          value={searchQuery}
-          onChange={setSearchQuery}
-          maxWidth={{ xs: "100%", sm: 400, md: 450 }}
-        />
-      </Box>
-
-      {/* Main Table Container */}
-      <Box sx={{ flexGrow: 1, minHeight: 560, height: "calc(100vh - 330px)" }}>
+      {/* Main Table Container: takes the rest of the screen on laptops, grows with its cards on mobile */}
+      <Box
+        sx={{
+          flex: { md: "1 1 0" },
+          minHeight: { md: 240 },
+        }}
+      >
         <CustomTable
-          rows={filteredInventory}
+          rows={inventory.rows}
           columns={columns}
           loading={loading}
+          getRowId={(row) => row.itemId}
+          toolbar={filterToolbar}
+          emptyMessage={hasActiveFilters ? "No items match these filters" : "No Records Found"}
+          pagination={{
+            page,
+            rowsPerPage,
+            totalRows: inventory.total,
+            onPageChange: setPage,
+            onRowsPerPageChange: handleRowsPerPageChange,
+          }}
+          sort={sort}
+          onSortChange={handleSortChange}
         />
       </Box>
 
